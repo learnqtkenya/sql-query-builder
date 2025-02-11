@@ -38,7 +38,15 @@ std::string SqlValue::toSqlString() const {
 
 std::string Condition::toString() const {
     if (op_ == Op::Raw) {
-        return std::string(column_);
+        return condition_str_;
+    }
+
+    if (op_ == Op::And || op_ == Op::Or) {
+        assert(left_ && right_);
+        return std::format("({}) {} ({})",
+                           left_->toString(),
+                           op_ == Op::And ? "AND" : "OR",
+                           right_->toString());
     }
 
     std::string result;
@@ -98,7 +106,6 @@ std::string Join::toString() const {
     return std::format("{} {} ON {}", type_str, table_, condition_);
 }
 
-// QueryBuilder implementation
 QueryBuilder& QueryBuilder::select(std::span<const std::string_view> cols) {
     type_ = QueryType::Select;
     select_columns_.count = std::min(cols.size(), MAX_COLUMNS);

@@ -29,7 +29,6 @@ concept SqlCompatible = std::same_as<T, int> ||
                         std::same_as<T, QDateTime> ||
                         std::is_enum_v<T>;
 
-// Forward declarations
 class SqlValue;
 class Condition;
 
@@ -74,7 +73,7 @@ public:
     [[nodiscard]] bool isNull() const { return storage_.index() == 0; }
 };
 
-// Condition building
+// Condition
 class Condition {
 public:
     enum class Op : uint8_t {
@@ -83,7 +82,9 @@ public:
         In, NotIn,
         Like, NotLike,
         Between,
-        Raw
+        Raw,
+        And,
+        Or
     };
 
 private:
@@ -92,6 +93,9 @@ private:
     std::array<SqlValue, 2> values_;
     size_t value_count_{0};
     bool negated_{false};
+    std::string condition_str_;
+    const Condition* left_{nullptr};
+    const Condition* right_{nullptr};
 
 public:
     // Default constructor for array initialization
@@ -99,7 +103,7 @@ public:
 
     // Constructor for raw conditions
     explicit Condition(std::string_view raw_condition)
-        : column_(raw_condition), op_(Op::Raw), value_count_(0) {}
+        : column_(""), op_(Op::Raw), value_count_(0), condition_str_(raw_condition) {}
 
     // Constructor for regular conditions
     Condition(std::string_view col, Op op, SqlValue value)
@@ -114,20 +118,19 @@ public:
         values_[1] = value2;
     }
 
-    [[nodiscard]] std::string toString() const;
+    // Constructor for compound conditions
+    Condition(const Condition& lhs, Op op, const Condition& rhs)
+        : op_(op), left_(&lhs), right_(&rhs) {}
 
-    Condition operator!() const {
-        auto copy = *this;
-        copy.negated_ = !negated_;
-        return copy;
-    }
     Condition operator&&(const Condition& other) const {
-        return Condition(std::string(column_) + " AND " + std::string(other.column_));
+        return Condition(*this, Op::And, other);
     }
 
     Condition operator||(const Condition& other) const {
-        return Condition(std::string(column_) + " OR " + std::string(other.column_));
+        return Condition(*this, Op::Or, other);
     }
+
+    [[nodiscard]] std::string toString() const;
 };
 
 // column
