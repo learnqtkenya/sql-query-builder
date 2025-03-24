@@ -16,7 +16,11 @@ find_package(benchmark CONFIG REQUIRED)
 add_executable(QueryBuilder
   main.cpp
 )
-target_link_libraries(QueryBuilder Qt${QT_VERSION_MAJOR}::Core benchmark::benchmark_main)
+target_link_libraries(QueryBuilder Qt${QT_VERSION_MAJOR}::Core)
+
+# benchmarks
+add_executable(smallvector_benchmark smallvector_benchmark.cpp)
+target_link_libraries(smallvector_benchmark Qt${QT_VERSION_MAJOR}::Core benchmark::benchmark_main)
 
 include(GNUInstallDirs)
 install(TARGETS QueryBuilder
