@@ -181,20 +181,33 @@ struct is_qt_type<QString> : std::true_type {};
 
 template<>
 struct is_qt_type<QDateTime> : std::true_type {};
+
+// Also check for reference types
+template<>
+struct is_qt_type<QString&> : std::true_type {};
+
+template<>
+struct is_qt_type<const QString&> : std::true_type {};
+
+template<>
+struct is_qt_type<QDateTime&> : std::true_type {};
+
+template<>
+struct is_qt_type<const QDateTime&> : std::true_type {};
 #endif
 
 // Concepts for type safety
 template<typename T>
 concept SqlCompatible =
-    std::is_integral_v<T> ||
-    std::is_floating_point_v<T> ||
-    std::is_enum_v<T> ||
-    std::same_as<T, std::string_view> ||
-    std::same_as<T, std::string> ||
+    std::is_integral_v<std::remove_cvref_t<T>> ||
+    std::is_floating_point_v<std::remove_cvref_t<T>> ||
+    std::is_enum_v<std::remove_cvref_t<T>> ||
+    std::same_as<std::remove_cvref_t<T>, std::string_view> ||
+    std::same_as<std::remove_cvref_t<T>, std::string> ||
 #ifdef SQLQUERYBUILDER_USE_QT
-    is_qt_type<T>::value ||
+    is_qt_type<std::remove_cvref_t<T>>::value ||
 #endif
-    std::same_as<T, bool>;
+    std::same_as<std::remove_cvref_t<T>, bool>;
 
 // Forward declarations
 template<typename Config = DefaultConfig>
@@ -552,6 +565,39 @@ template<typename Config, SqlCompatible T>
 inline Condition<Config> operator>=(const Column<Config>& col, T&& val) {
     return col.ge(std::forward<T>(val));
 }
+
+// Special cases for Qt types
+#ifdef SQLQUERYBUILDER_USE_QT
+template<typename Config>
+inline Condition<Config> operator==(const Column<Config>& col, const QString& val) {
+    return col.eq(std::string_view(val.toStdString()));
+}
+
+template<typename Config>
+inline Condition<Config> operator!=(const Column<Config>& col, const QString& val) {
+    return col.ne(std::string_view(val.toStdString()));
+}
+
+template<typename Config>
+inline Condition<Config> operator<(const Column<Config>& col, const QDateTime& val) {
+    return col.lt(val);
+}
+
+template<typename Config>
+inline Condition<Config> operator<=(const Column<Config>& col, const QDateTime& val) {
+    return col.le(val);
+}
+
+template<typename Config>
+inline Condition<Config> operator>(const Column<Config>& col, const QDateTime& val) {
+    return col.gt(val);
+}
+
+template<typename Config>
+inline Condition<Config> operator>=(const Column<Config>& col, const QDateTime& val) {
+    return col.ge(val);
+}
+#endif
 
 // Join class
 template<typename Config>

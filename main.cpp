@@ -1,3 +1,4 @@
+#define SQLQUERYBUILDER_USE_QT
 #include "sqlquerybuilder.hpp"
 #include <iostream>
 #include <string>
