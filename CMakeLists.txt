@@ -14,7 +14,6 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
 add_executable(QueryBuilder
   main.cpp
-  sqlquerybuilder.hpp sqlquerybuilder.cpp
 )
 target_link_libraries(QueryBuilder Qt${QT_VERSION_MAJOR}::Core)
 
