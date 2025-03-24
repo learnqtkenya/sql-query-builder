@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "default",
+      "inherits": "vcpkg",
+      "environment": {
+        "VCPKG_ROOT": "$env{HOME}/bin/vcpkg"
+      },
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "/opt/Qt/6.8.2/gcc_64"
+      }
+    }
+  ]
+}
