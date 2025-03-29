@@ -1,198 +1,264 @@
-#define SQLQUERYBUILDER_USE_QT
 #include "sqlquerybuilder.hpp"
 #include <iostream>
+#include <chrono>
+#include <vector>
 #include <string>
 #include <array>
+#include <memory>
 
-// Optional: Define custom config
-struct MyConfig {
-    static constexpr size_t MaxColumns = 64;
-    static constexpr size_t MaxConditions = 32;
-    static constexpr size_t MaxJoins = 8;
-    static constexpr size_t MaxOrderBy = 16;
-    static constexpr size_t MaxGroupBy = 16;
-    static constexpr bool ThrowOnError = true;
+// Define our custom configuration with larger limits for stress testing
+struct LargeConfig {
+    static constexpr size_t MaxColumns = 100;
+    static constexpr size_t MaxConditions = 50;
+    static constexpr size_t MaxJoins = 10;
+    static constexpr size_t MaxOrderBy = 20;
+    static constexpr size_t MaxGroupBy = 20;
+    static constexpr bool ThrowOnError = false;
 };
 
-// Example enum types
-enum class UserStatus : int {
-    Active = 1,
-    Inactive = 0,
-    Pending = 2
+// Define smaller configuration for the stack-allocated version
+struct SmallConfig {
+    static constexpr size_t MaxColumns = 16;
+    static constexpr size_t MaxConditions = 8;
+    static constexpr size_t MaxJoins = 4;
+    static constexpr size_t MaxOrderBy = 4;
+    static constexpr size_t MaxGroupBy = 4;
+    static constexpr bool ThrowOnError = false;
 };
 
-enum class Priority : int {
-    Low = 0,
-    Medium = 1,
-    High = 2,
-    Critical = 3
+// Define tables using the macros
+SQL_DEFINE_TABLE(users)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(username, std::string)
+SQL_DEFINE_COLUMN(email, std::string)
+SQL_DEFINE_COLUMN(password, std::string)
+SQL_DEFINE_COLUMN(first_name, std::string)
+SQL_DEFINE_COLUMN(last_name, std::string)
+SQL_DEFINE_COLUMN(phone, std::string)
+SQL_DEFINE_COLUMN(address, std::string)
+SQL_DEFINE_COLUMN(city, std::string)
+SQL_DEFINE_COLUMN(state, std::string)
+SQL_DEFINE_COLUMN(country, std::string)
+SQL_DEFINE_COLUMN(zip_code, std::string)
+SQL_DEFINE_COLUMN(active, bool)
+SQL_DEFINE_COLUMN(verified, bool)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(orders)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(user_id, int64_t)
+SQL_DEFINE_COLUMN(order_number, std::string)
+SQL_DEFINE_COLUMN(order_date, std::string)
+SQL_DEFINE_COLUMN(total_amount, double)
+SQL_DEFINE_COLUMN(status, std::string)
+SQL_DEFINE_COLUMN(shipping_address, std::string)
+SQL_DEFINE_COLUMN(shipping_city, std::string)
+SQL_DEFINE_COLUMN(shipping_state, std::string)
+SQL_DEFINE_COLUMN(shipping_country, std::string)
+SQL_DEFINE_COLUMN(shipping_zip_code, std::string)
+SQL_DEFINE_COLUMN(billing_address, std::string)
+SQL_DEFINE_COLUMN(billing_city, std::string)
+SQL_DEFINE_COLUMN(billing_state, std::string)
+SQL_DEFINE_COLUMN(billing_country, std::string)
+SQL_DEFINE_COLUMN(billing_zip_code, std::string)
+SQL_DEFINE_COLUMN(payment_method, std::string)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(order_items)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(order_id, int64_t)
+SQL_DEFINE_COLUMN(product_id, int64_t)
+SQL_DEFINE_COLUMN(quantity, int)
+SQL_DEFINE_COLUMN(unit_price, double)
+SQL_DEFINE_COLUMN(total_price, double)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(products)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(name, std::string)
+SQL_DEFINE_COLUMN(description, std::string)
+SQL_DEFINE_COLUMN(sku, std::string)
+SQL_DEFINE_COLUMN(category_id, int64_t)
+SQL_DEFINE_COLUMN(price, double)
+SQL_DEFINE_COLUMN(cost, double)
+SQL_DEFINE_COLUMN(stock_quantity, int)
+SQL_DEFINE_COLUMN(active, bool)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_END_TABLE()
+
+// Instantiate table objects
+const users_table users;
+const orders_table orders;
+const order_items_table order_items;
+const products_table products;
+
+// Benchmark class for measuring performance
+class Benchmark {
+public:
+    template<typename Func>
+    static void run(const std::string& name, Func func, int iterations = 10000) {
+        auto start = std::chrono::high_resolution_clock::now();
+
+        for (int i = 0; i < iterations; i++) {
+            auto result = func();
+            // Use the result to prevent optimization from removing the function call
+            if (result.empty()) {
+                std::cerr << "Empty result, this should not happen" << std::endl;
+            }
+        }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+        std::cout << name << ": " << duration << "ms for " << iterations
+                  << " iterations (" << (duration / static_cast<double>(iterations))
+                  << "ms per iteration)" << std::endl;
+    }
 };
 
 int main() {
-    using namespace sql;
-    using namespace std::string_view_literals;
+    std::cout << "Running SQL Query Builder benchmark...\n" << std::endl;
 
-    // Default configuration
-    {
-        std::cout << "\n=== Default Configuration ===\n";
-        constexpr std::array columns = {"id"sv, "name"sv, "email"sv};
+    // Test 1: Simple SELECT query
+    Benchmark::run("Stack-allocated Simple SELECT", []() {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username, users.email)
+            .from(users.table)
+            .where(users.active == true)
+            .orderBy(users.username)
+            .build();
+        return query;
+    });
 
-        auto query = QueryBuilder()
-                         .select(std::span{columns})
-                         .from("users"sv)
-                         .where(col("active") == true)
-                         .orderBy("created_at"sv, false)
-                         .limit(10)
-                         .build();
+    // Test 2: Complex JOIN query
+    Benchmark::run("Stack-allocated Complex JOIN", []() {
+        auto query = sql::QueryBuilder<>()
+        .select(
+            users.id, users.username,
+            orders.order_number, orders.total_amount,
+            products.name, products.price,
+            order_items.quantity
+            )
+            .from(users.table)
+            .innerJoin(orders.table,
+                       (users.id == orders.user_id).toString())
+            .innerJoin(order_items.table,
+                       (orders.id == order_items.order_id).toString())
+            .innerJoin(products.table,
+                       (order_items.product_id == products.id).toString())
+            .where((users.active == true) &&
+                   (orders.status == "completed") &&
+                   (products.active == true))
+            .orderBy(orders.created_at, false)
+            .build();
+        return query;
+    });
 
-        std::cout << query << "\n";
-    }
+    // Test 3: Many conditions with LargeConfig
+    Benchmark::run("Stack-allocated Many Conditions with LargeConfig", []() {
+        auto query = sql::QueryBuilder<LargeConfig>()
+        .select(users.id, users.username, users.email)
+            .from(users.table)
+            .where(users.active == true)
+            .where(users.verified == true)
+            .where(users.city == "New York")
+            .where(users.state == "NY")
+            .where(users.country == "USA")
+            .where(users.created_at >= "2023-01-01")
+            .where(users.created_at <= "2023-12-31")
+            .orderBy(users.username)
+            .build();
+        return query;
+    });
 
-    // Custom configuration
-    {
-        std::cout << "\n=== Custom Configuration ===\n";
-        using CustomBuilder = QueryBuilder<MyConfig>;
+    // Test 4: INSERT with many values
+    Benchmark::run("Stack-allocated INSERT", []() {
+        auto query = sql::QueryBuilder<>()
+        .insert(users.table)
+            .value(users.username, "john_doe")
+            .value(users.email, "john@example.com")
+            .value(users.password, "password123")
+            .value(users.first_name, "John")
+            .value(users.last_name, "Doe")
+            .value(users.phone, "555-1234")
+            .value(users.address, "123 Main St")
+            .value(users.city, "New York")
+            .value(users.state, "NY")
+            .value(users.country, "USA")
+            .value(users.zip_code, "10001")
+            .value(users.active, true)
+            .value(users.verified, true)
+            .value(users.created_at, "2023-01-01 12:00:00")
+            .value(users.updated_at, "2023-01-01 12:00:00")
+            .build();
+        return query;
+    });
 
-        auto query = CustomBuilder()
-                         .select("id"sv, "name"sv, "email"sv)
-                         .from("users"sv)
-                         .where(col<MyConfig>("status") == UserStatus::Active)
-                         .orderBy("created_at"sv, false)
-                         .limit(10)
-                         .build();
+    // Test 5: Reuse builder for many queries
+    Benchmark::run("Stack-allocated Query Reuse", []() {
+        sql::QueryBuilder<> builder;
+        std::string result;
 
-        std::cout << query << "\n";
-    }
-
-    // Complex conditions
-    {
-        std::cout << "\n=== Complex Conditions ===\n";
-
-        auto query = QueryBuilder()
-                         .select("*"sv)
-                         .from("tasks"sv)
-                         .where(
-                             (col("status") == Priority::High) &&
-                             (
-                                 (col("assigned_to") == "admin"sv) ||
-                                 (col("created_at") >= "2023-01-01"sv)
-                                 )
-                             )
-                         .orderBy("priority"sv, false)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-
-    // Complex join with multiple conditions
-    {
-        std::cout << "\n=== Complex Join Query ===\n";
-
-        auto query = QueryBuilder()
-                         .select("u.id"sv, "u.name"sv, "COUNT(o.id) as order_count"sv)
-                         .from("users u"sv)
-                         .leftJoin("orders o"sv, "u.id = o.user_id"sv)
-                         .innerJoin("user_profiles up"sv, "u.id = up.user_id"sv)
-                         .where(col("u.status") == UserStatus::Active)
-                         .whereNotNull("u.email"sv)
-                         .groupBy("u.id"sv)
-                         .groupBy("u.name"sv)
-                         .having("COUNT(o.id) > 5"sv)
-                         .orderBy("order_count"sv, false)
-                         .limit(100)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-
-    // Error handling
-    {
-        std::cout << "\n=== Error Handling ===\n";
-
-        auto builder = QueryBuilder();
-        // Intentionally omit the table name
-        auto result = builder.select("id"sv, "name"sv).buildResult();
-
-        if (result.hasError()) {
-            std::cout << "Error: " << result.error().message << "\n";
+        for (int i = 0; i < 5; i++) {
+            auto query = builder.reset()
+            .select(users.id, users.username, users.email)
+                .from(users.table)
+                .where(users.id == i)
+                .build();
+            result += query; // Accumulate to ensure the loop doesn't get optimized away
         }
-    }
+        return result;
+    });
 
-    // Insert query
-    {
-        std::cout << "\n=== Insert Query ===\n";
+    // Test 6: Compare with different config types
+    std::cout << "\nComparing stack vs heap allocation under stress...\n" << std::endl;
 
-        auto query = QueryBuilder()
-                         .insert("users"sv)
-                         .value("name"sv, "John Doe"sv)
-                         .value("email"sv, "john@example.com"sv)
-                         .value("active"sv, true)
-                         .value("status"sv, UserStatus::Active)
-                         .build();
+    // First use small config with stack allocation
+    Benchmark::run("Stack-allocated - Stress Test with SmallConfig", []() {
+        // Create a builder with small limits that fits on stack
+        sql::QueryBuilder<SmallConfig> builder;
+        std::string result;
 
-        std::cout << query << "\n";
-    }
+        for (int i = 0; i < 10; i++) {
+            auto query = builder.reset()
+            .select(users.id, users.username, users.email,
+                    users.first_name, users.last_name, users.phone)
+                .from(users.table)
+                .where(users.active == true)
+                .where(users.verified == true)
+                .where(users.city == "New York")
+                .where(users.created_at >= "2023-01-01")
+                .build();
+            result += query;
+        }
+        return result;
+    });
 
-    // Update query
-    {
-        std::cout << "\n=== Update Query ===\n";
-
-        auto query = QueryBuilder()
-                         .update("users"sv)
-                         .set("name"sv, "Jane Doe"sv)
-                         .set("status"sv, UserStatus::Active)
-                         .where(col("id") == 42)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-
-    // Delete query
-    {
-        std::cout << "\n=== Delete Query ===\n";
-
-        auto query = QueryBuilder()
-                         .deleteFrom("users"sv)
-                         .where(col("status") == UserStatus::Inactive)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-
-    // Special string handling
-    {
-        std::cout << "\n=== Special String Handling ===\n";
-
-        std::string title = "Test's query with \"quotes\" and other's special chars";
-
-        auto query = QueryBuilder()
-                         .select("id"sv, "title"sv)
-                         .from("tasks"sv)
-                         .where(col("title") == title)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-
-#ifdef SQLQUERYBUILDER_USE_QT
-    // Qt integration (only if Qt support is enabled)
-    {
-        std::cout << "\n=== Qt Integration ===\n";
-
-        QDateTime startDate = QDateTime::currentDateTime().addDays(-7);
-        QString complexTitle = QString("Test's query with \"quotes\" and other's special chars");
-
-        auto query = QueryBuilder()
-                         .select("id"sv, "title"sv, "created_at"sv)
-                         .from("tasks"sv)
-                         .where((col("created_at") >= startDate) &&
-                                (col("title") == complexTitle))
-                         .orderBy("created_at"sv)
-                         .build();
-
-        std::cout << query << "\n";
-    }
-#endif
+    // Now allocate builders on heap to simulate the old way
+    Benchmark::run("Heap-allocated - Stress Test with SmallConfig", []() {
+        std::string result;
+        for (int i = 0; i < 10; i++) {
+            // Create a new builder on heap each time (simulate dynamic allocation)
+            auto builder = std::make_unique<sql::QueryBuilder<SmallConfig>>();
+            auto query = builder->select(users.id, users.username, users.email,
+                                         users.first_name, users.last_name, users.phone)
+                             .from(users.table)
+                             .where(users.active == true)
+                             .where(users.verified == true)
+                             .where(users.city == "New York")
+                             .where(users.created_at >= "2023-01-01")
+                             .build();
+            result += query;
+        }
+        return result;
+    });
 
     return 0;
 }
