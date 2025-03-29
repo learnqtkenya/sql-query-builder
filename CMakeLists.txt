@@ -19,8 +19,8 @@ add_executable(QueryBuilder
 target_link_libraries(QueryBuilder Qt${QT_VERSION_MAJOR}::Core)
 
 # benchmarks
-add_executable(smallvector_benchmark smallvector_benchmark.cpp)
-target_link_libraries(smallvector_benchmark Qt${QT_VERSION_MAJOR}::Core benchmark::benchmark_main)
+add_executable(usage_benchmark usage_benchmark.cpp)
+target_link_libraries(usage_benchmark Qt${QT_VERSION_MAJOR}::Core benchmark::benchmark_main)
 
 include(GNUInstallDirs)
 install(TARGETS QueryBuilder
