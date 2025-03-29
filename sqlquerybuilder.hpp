@@ -954,6 +954,28 @@ public:
         return *this;
     }
 
+    template<typename T, size_t Extent>
+    QueryBuilder& select(std::span<const T, Extent> cols) {
+        type_ = QueryType::Select;
+
+        if (select_columns_count_ + cols.size() > Config::MaxColumns) {
+            auto error = QueryError(QueryError::Code::TooManyColumns,
+                                    std::format("Too many columns: limit is {}", Config::MaxColumns));
+            last_error_ = error;
+            if constexpr(Config::ThrowOnError) {
+                throw error;
+            }
+            return *this;
+        }
+
+        for (const auto& col : cols) {
+            if constexpr (std::is_convertible_v<T, std::string_view>) {
+                select_columns_[select_columns_count_++] = static_cast<std::string_view>(col);
+            }
+        }
+        return *this;
+    }
+
     // Helper to add columns to select
     template<typename T>
     void addSelectColumn(const T& col) {
