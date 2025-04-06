@@ -21,7 +21,7 @@
 namespace sql {
 inline namespace v1 {
 
-// Configuration with compile-time defaults
+// Configuration
 struct DefaultConfig {
     static constexpr size_t MaxColumns = 32;
     static constexpr size_t MaxConditions = 16;
@@ -54,7 +54,6 @@ struct QueryError {
     explicit operator bool() const { return code != Code::None; }
 };
 
-// Result wrapper for error handling
 template<typename T>
 class Result {
     std::variant<T, QueryError> value_;
@@ -70,7 +69,6 @@ public:
     explicit operator bool() const { return !hasError(); }
 };
 
-// Helper for string literals detection that works properly
 template<typename T>
 struct is_string_literal : std::false_type {};
 
@@ -104,7 +102,6 @@ template<>
 struct is_qt_type<const QDateTime&> : std::true_type {};
 #endif
 
-// Updated SqlCompatible concept for better string literal handling
 template<typename T>
 concept SqlCompatible =
     std::is_integral_v<std::remove_cvref_t<T>> ||
@@ -139,7 +136,6 @@ public:
 
     [[nodiscard]] constexpr std::string_view name() const { return name_; }
 
-    // Implicit conversion to string_view
     operator std::string_view() const { return name_; }
 };
 
@@ -165,7 +161,6 @@ public:
         return std::string(table_) + "." + std::string(name_);
     }
 
-    // Implicit conversion to string_view
     operator std::string_view() const { return name_; }
 
     // Condition generation methods
@@ -365,21 +360,18 @@ private:
     std::array<ConditionData, Config::MaxConditions> conditions_;
     size_t count_{0};
 
-    // Singleton pattern - one storage per config type
     static ConditionStorage<Config>& instance() {
         static ConditionStorage<Config> storage;
         return storage;
     }
 
 public:
-    // Create a simple condition and return a reference to it
     static ConditionRef<Config> createSimple(std::string_view column,
                                              typename Condition<Config>::Op op,
                                              SqlValue<Config> value,
                                              bool negated = false) {
         auto& storage = instance();
         if (storage.count_ >= Config::MaxConditions) {
-            // In a real implementation, we'd handle this error better
             return ConditionRef<Config>{};
         }
 
@@ -485,7 +477,6 @@ public:
         return conditions_[index];
     }
 
-    // Output a condition to a string
     void toString(size_t index, std::ostringstream& oss) const {
         const auto& data = conditions_[index];
 
@@ -575,26 +566,20 @@ public:
     ConditionRef<Config> ref_;
 
 public:
-    // Default constructor
     Condition() = default;
 
-    // Constructor for raw conditions
     explicit Condition(std::string_view raw_condition)
         : ref_(ConditionStorage<Config>::createRaw(raw_condition)) {}
 
-    // Constructor for regular conditions
     Condition(std::string_view col, Op op, SqlValue<Config> value)
         : ref_(ConditionStorage<Config>::createSimple(col, op, value)) {}
 
-    // Constructor for column-to-column comparison
     Condition(std::string_view left_col, Op op, std::string_view right_col)
         : ref_(ConditionStorage<Config>::createColumnComparison(left_col, op, right_col)) {}
 
-    // Constructor for between conditions
     Condition(std::string_view col, Op op, SqlValue<Config> value1, SqlValue<Config> value2)
         : ref_(ConditionStorage<Config>::createBetween(col, value1, value2)) {}
 
-    // Constructor for compound conditions
     Condition(const Condition& lhs, Op op, const Condition& rhs)
         : ref_(ConditionStorage<Config>::createCompound(lhs.ref_, op, rhs.ref_)) {}
 
@@ -1011,7 +996,7 @@ public:
     }
 };
 
-// Main QueryBuilder class with stack-allocated storage
+// Main QueryBuilder class
 template<typename Config = DefaultConfig>
 class QueryBuilder {
 public:
@@ -1021,7 +1006,6 @@ private:
     QueryType type_{QueryType::Select};
     std::string_view table_;
 
-    // Use fixed-size arrays with explicit tracking of the used size
     std::array<std::string_view, Config::MaxColumns> select_columns_{};
     size_t select_columns_count_{0};
 
@@ -1046,7 +1030,6 @@ private:
     bool distinct_{false};
     mutable std::optional<QueryError> last_error_;
 
-    // Helper method to estimate query size for string reservation
     [[nodiscard]] size_t estimateSize() const {
         size_t size = 64; // Base size
         size += table_.size();
@@ -1064,7 +1047,6 @@ private:
 public:
     QueryBuilder() = default;
 
-    // Reset builder state - Fixed to return reference to this
     QueryBuilder& reset() {
         type_ = QueryType::Select;
         table_ = "";
@@ -1082,12 +1064,10 @@ public:
         return *this;
     }
 
-    // Get last error
     [[nodiscard]] std::optional<QueryError> lastError() const {
         return last_error_;
     }
 
-    // Select methods with fixed-size array bounds checking
     template<typename... Cols>
     QueryBuilder& select(Cols&&... cols) {
         type_ = QueryType::Select;
@@ -1129,7 +1109,6 @@ public:
         return *this;
     }
 
-    // Helper to add columns to select
     template<typename T>
     void addSelectColumn(const T& col) {
         if constexpr (std::is_convertible_v<T, std::string_view>) {
@@ -1178,7 +1157,6 @@ public:
         return *this;
     }
 
-    // Where method with bounds checking and conversion between configs
     template<typename OtherConfig>
     QueryBuilder& where(const Condition<OtherConfig>& condition) {
         if (where_conditions_count_ >= Config::MaxConditions) {
