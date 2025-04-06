@@ -3,6 +3,8 @@
 #include <iostream>
 #include <string>
 #include <array>
+#include <vector>
+#include <iomanip>
 
 // Optional: Define custom config
 struct MyConfig {
@@ -28,6 +30,7 @@ enum class Priority : int {
     Critical = 3
 };
 
+// Define the tables
 SQL_DEFINE_TABLE(users)
 SQL_DEFINE_COLUMN(id, int64_t)
 SQL_DEFINE_COLUMN(name, std::string)
@@ -35,32 +38,69 @@ SQL_DEFINE_COLUMN(email, std::string)
 SQL_DEFINE_COLUMN(active, bool)
 SQL_DEFINE_COLUMN(status, UserStatus)
 SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_DEFINE_COLUMN(last_login, std::string)
+SQL_DEFINE_COLUMN(role, std::string)
+SQL_DEFINE_COLUMN(department, std::string)
 SQL_END_TABLE()
 
 SQL_DEFINE_TABLE(tasks)
 SQL_DEFINE_COLUMN(id, int64_t)
 SQL_DEFINE_COLUMN(title, std::string)
+SQL_DEFINE_COLUMN(description, std::string)
 SQL_DEFINE_COLUMN(status, Priority)
 SQL_DEFINE_COLUMN(assigned_to, std::string)
 SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(due_date, std::string)
+SQL_DEFINE_COLUMN(completed_at, std::string)
 SQL_DEFINE_COLUMN(priority, int)
+SQL_DEFINE_COLUMN(category, std::string)
 SQL_END_TABLE()
 
 SQL_DEFINE_TABLE(orders)
 SQL_DEFINE_COLUMN(id, int64_t)
 SQL_DEFINE_COLUMN(user_id, int64_t)
+SQL_DEFINE_COLUMN(order_date, std::string)
 SQL_DEFINE_COLUMN(total, double)
+SQL_DEFINE_COLUMN(status, std::string)
+SQL_DEFINE_COLUMN(shipping_address, std::string)
+SQL_DEFINE_COLUMN(payment_method, std::string)
 SQL_END_TABLE()
 
 SQL_DEFINE_TABLE(user_profiles)
 SQL_DEFINE_COLUMN(user_id, int64_t)
 SQL_DEFINE_COLUMN(profile_data, std::string)
+SQL_DEFINE_COLUMN(avatar_url, std::string)
+SQL_DEFINE_COLUMN(bio, std::string)
+SQL_DEFINE_COLUMN(preferences, std::string)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(order_items)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(order_id, int64_t)
+SQL_DEFINE_COLUMN(product_id, int64_t)
+SQL_DEFINE_COLUMN(quantity, int)
+SQL_DEFINE_COLUMN(price, double)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(products)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(name, std::string)
+SQL_DEFINE_COLUMN(description, std::string)
+SQL_DEFINE_COLUMN(price, double)
+SQL_DEFINE_COLUMN(stock, int)
+SQL_DEFINE_COLUMN(category, std::string)
 SQL_END_TABLE()
 
 // Create typed tables with custom config
 struct users_table_custom : public users_table {
     using config_type = MyConfig;
 };
+
+// Helper function to print section headers
+void printSection(const std::string& title) {
+    std::cout << "\n=== " << title << " ===\n";
+}
 
 int main() {
     using namespace sql;
@@ -71,11 +111,13 @@ int main() {
     const tasks_table tasks;
     const orders_table orders;
     const user_profiles_table profiles;
+    const order_items_table order_items;
+    const products_table products;
     const users_table_custom users_custom;
 
     // Default configuration with the new string_view-based interface
     {
-        std::cout << "\n=== Default Configuration (String-based) ===\n";
+        printSection("Default Configuration (String-based)");
         constexpr std::array columns = {"id"sv, "name"sv, "email"sv};
 
         auto query = QueryBuilder()
@@ -91,7 +133,7 @@ int main() {
 
     // Default configuration with the new typed column interface
     {
-        std::cout << "\n=== Default Configuration (Typed) ===\n";
+        printSection("Default Configuration (Typed)");
 
         auto query = QueryBuilder()
                          .select(users.id, users.name, users.email)
@@ -106,7 +148,7 @@ int main() {
 
     // Custom configuration with string interface
     {
-        std::cout << "\n=== Custom Configuration (String-based) ===\n";
+        printSection("Custom Configuration (String-based)");
         using CustomBuilder = QueryBuilder<MyConfig>;
 
         auto query = CustomBuilder()
@@ -122,7 +164,7 @@ int main() {
 
     // Custom configuration with typed interface
     {
-        std::cout << "\n=== Custom Configuration (Typed) ===\n";
+        printSection("Custom Configuration (Typed)");
         using CustomBuilder = QueryBuilder<MyConfig>;
 
         auto query = CustomBuilder()
@@ -138,7 +180,7 @@ int main() {
 
     // Complex conditions with string interface
     {
-        std::cout << "\n=== Complex Conditions (String-based) ===\n";
+        printSection("Complex Conditions (String-based)");
 
         auto query = QueryBuilder()
                          .select("*"sv)
@@ -158,7 +200,7 @@ int main() {
 
     // Complex conditions with typed interface
     {
-        std::cout << "\n=== Complex Conditions (Typed) ===\n";
+        printSection("Complex Conditions (Typed)");
 
         auto query = QueryBuilder()
                          .select(all_of(tasks.table))
@@ -178,7 +220,7 @@ int main() {
 
     // Complex join with string interface
     {
-        std::cout << "\n=== Complex Join Query (String-based) ===\n";
+        printSection("Complex Join Query (String-based)");
 
         auto query = QueryBuilder()
                          .select("u.id"sv, "u.name"sv, "COUNT(o.id) as order_count"sv)
@@ -198,9 +240,8 @@ int main() {
     }
 
     // Complex join with typed interface
-    // Note: In a real setup you'd use aliased tables, but for simplicity we'll use the basic table names
     {
-        std::cout << "\n=== Complex Join Query (Typed) ===\n";
+        printSection("Complex Join Query (Typed)");
 
         // We need to manually build the condition strings since we don't have aliased tables
         std::string join_condition1 = (users.id == orders.user_id).toString();
@@ -226,7 +267,7 @@ int main() {
 
     // Error handling
     {
-        std::cout << "\n=== Error Handling ===\n";
+        printSection("Error Handling");
 
         auto builder = QueryBuilder();
         // Intentionally omit the table name
@@ -239,7 +280,7 @@ int main() {
 
     // Insert query with string interface
     {
-        std::cout << "\n=== Insert Query (String-based) ===\n";
+        printSection("Insert Query (String-based)");
 
         auto query = QueryBuilder()
                          .insert("users"sv)
@@ -254,7 +295,7 @@ int main() {
 
     // Insert query with typed interface
     {
-        std::cout << "\n=== Insert Query (Typed) ===\n";
+        printSection("Insert Query (Typed)");
 
         auto query = QueryBuilder()
                          .insert(users.table)
@@ -269,7 +310,7 @@ int main() {
 
     // Update query with string interface
     {
-        std::cout << "\n=== Update Query (String-based) ===\n";
+        printSection("Update Query (String-based)");
 
         auto query = QueryBuilder()
                          .update("users"sv)
@@ -283,7 +324,7 @@ int main() {
 
     // Update query with typed interface
     {
-        std::cout << "\n=== Update Query (Typed) ===\n";
+        printSection("Update Query (Typed)");
 
         auto query = QueryBuilder()
                          .update(users.table)
@@ -297,7 +338,7 @@ int main() {
 
     // Delete query with string interface
     {
-        std::cout << "\n=== Delete Query (String-based) ===\n";
+        printSection("Delete Query (String-based)");
 
         auto query = QueryBuilder()
                          .deleteFrom("users"sv)
@@ -309,7 +350,7 @@ int main() {
 
     // Delete query with typed interface
     {
-        std::cout << "\n=== Delete Query (Typed) ===\n";
+        printSection("Delete Query (Typed)");
 
         auto query = QueryBuilder()
                          .deleteFrom(users.table)
@@ -321,7 +362,7 @@ int main() {
 
     // Special string handling with string interface
     {
-        std::cout << "\n=== Special String Handling (String-based) ===\n";
+        printSection("Special String Handling (String-based)");
 
         std::string title = "Test's query with \"quotes\" and other's special chars";
 
@@ -336,7 +377,7 @@ int main() {
 
     // Special string handling with typed interface
     {
-        std::cout << "\n=== Special String Handling (Typed) ===\n";
+        printSection("Special String Handling (Typed)");
 
         std::string title = "Test's query with \"quotes\" and other's special chars";
 
@@ -352,7 +393,7 @@ int main() {
 #ifdef SQLQUERYBUILDER_USE_QT
     // Qt integration with string interface
     {
-        std::cout << "\n=== Qt Integration (String-based) ===\n";
+        printSection("Qt Integration (String-based)");
 
         QDateTime startDate = QDateTime::currentDateTime().addDays(-7);
         QString complexTitle = QString("Test's query with \"quotes\" and other's special chars");
@@ -370,7 +411,7 @@ int main() {
 
     // Qt integration with typed interface
     {
-        std::cout << "\n=== Qt Integration (Typed) ===\n";
+        printSection("Qt Integration (Typed)");
 
         QDateTime startDate = QDateTime::currentDateTime().addDays(-7);
         QString complexTitle = QString("Test's query with \"quotes\" and other's special chars");
@@ -386,6 +427,244 @@ int main() {
         std::cout << query << "\n";
     }
 #endif
+
+    // New Examples - Advanced Query Features:
+
+    // SQL Aggregate Functions
+    {
+        printSection("SQL Aggregate Functions");
+
+        auto query = QueryBuilder()
+                         .select(
+                             count(orders.id).c_str(),
+                             sum(orders.total).c_str(),
+                             avg(orders.total).c_str(),
+                             max(orders.total).c_str(),
+                             min(orders.total).c_str())
+                         .from(orders.table)
+                         .where(orders.status == "completed")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Between Clause
+    {
+        printSection("Between Clause");
+
+        auto query = QueryBuilder()
+                         .select(orders.id, orders.user_id, orders.total)
+                         .from(orders.table)
+                         .whereBetween(orders.total, 100.0, 500.0)
+                         .where(orders.order_date >= "2023-01-01")
+                         .where(orders.order_date <= "2023-12-31")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // WhereIn Clause
+    {
+        printSection("WhereIn Clause");
+
+        std::array<int64_t, 3> userIds = {1, 2, 3};
+        std::span<const int64_t> userIdsSpan(userIds);
+
+        auto query = QueryBuilder()
+                         .select(orders.id, orders.total)
+                         .from(orders.table)
+                         .whereIn(orders.user_id, userIdsSpan)
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Insert or Replace
+    {
+        printSection("Insert or Replace");
+
+        auto query = QueryBuilder()
+                         .insertOrReplace(users.table)
+                         .value(users.id, 1)
+                         .value(users.name, "John Doe")
+                         .value(users.email, "john@example.com")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Multiple WHERE clauses combined with AND
+    {
+        printSection("Multiple WHERE Clauses");
+
+        auto query = QueryBuilder()
+                         .select(users.id, users.name, users.email)
+                         .from(users.table)
+                         .where(users.active == true)
+                         .where(users.created_at >= "2023-01-01")
+                         .where(users.role == "admin")
+                         .where(users.department == "IT")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Using LIKE for pattern matching
+    {
+        printSection("LIKE Pattern Matching");
+
+        auto query = QueryBuilder()
+                         .select(users.id, users.name, users.email)
+                         .from(users.table)
+                         .whereLike(users.email, "%@gmail.com")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Multi-table SELECT with subqueries
+    {
+        printSection("Subquery as WHERE Condition");
+
+        // First create a subquery that will get the highest order totals
+        auto subqueryResult = QueryBuilder()
+                                  .select(orders.id)
+                                  .from(orders.table)
+                                  .where(orders.total > 1000)
+                                  .build();
+
+// Convert to std::string if using Qt
+#ifdef SQLQUERYBUILDER_USE_QT
+        std::string subquery = subqueryResult.toStdString();
+#else
+        std::string subquery = subqueryResult;
+#endif
+
+        // Then use that subquery in a whereExists clause
+        auto query = QueryBuilder()
+                         .select(users.id, users.name)
+                         .from(users.table)
+                         .whereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id AND orders.id IN (" + subquery + ")")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Advanced JOIN with multiple tables
+    {
+        printSection("Advanced JOIN with Multiple Tables");
+
+        auto query = QueryBuilder()
+                         .select(
+                             users.id, users.name,
+                             orders.id, orders.total,
+                             order_items.quantity,
+                             products.name)
+                         .from(users.table)
+                         .innerJoin(orders.table, (users.id == orders.user_id).toString())
+                         .innerJoin(order_items.table, (orders.id == order_items.order_id).toString())
+                         .innerJoin(products.table, (order_items.product_id == products.id).toString())
+                         .where(orders.total > 100)
+                         .where(products.category == "Electronics")
+                         .orderBy(orders.total, false)
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Testing std::string integration
+    {
+        printSection("std::string Integration");
+
+        std::string name = "John Smith";
+        std::string email = "john.smith@example.com";
+        std::string department = "Marketing";
+
+        auto query = QueryBuilder()
+                         .select(users.id, users.email)
+                         .from(users.table)
+                         .where(users.name == name)
+                         .where(users.email == email)
+                         .where(users.department == department)
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Truncate table
+    {
+        printSection("Truncate Table");
+
+        auto query = QueryBuilder()
+                         .truncate(users.table)
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Builder reuse
+    {
+        printSection("Builder Reuse");
+
+        QueryBuilder builder;
+
+        // First query
+        auto query1 = builder
+                          .select(users.id, users.name)
+                          .from(users.table)
+                          .where(users.active == true)
+                          .build();
+        std::cout << "Query 1: " << query1 << "\n";
+
+        // Reset and build new query
+        builder.reset();
+        auto query2 = builder
+                          .select(orders.id, orders.total)
+                          .from(orders.table)
+                          .where(orders.user_id == 42)
+                          .build();
+        std::cout << "Query 2: " << query2 << "\n";
+    }
+
+    // Distinct select
+    {
+        printSection("Distinct Select");
+
+        auto query = QueryBuilder()
+                         .distinct()
+                         .select(tasks.category)
+                         .from(tasks.table)
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Using raw SQL in conditions
+    {
+        printSection("Raw SQL in Conditions");
+
+        auto query = QueryBuilder()
+                         .select(users.id, users.name)
+                         .from(users.table)
+                         .whereRaw("LOWER(name) LIKE '%john%'")
+                         .whereRaw("DATE_PART('year', created_at) = 2023")
+                         .build();
+
+        std::cout << query << "\n";
+    }
+
+    // Using raw SQL in fields
+    {
+        printSection("Raw SQL in Fields");
+
+        auto query = QueryBuilder()
+                         .select(users.id, users.name, "EXTRACT(YEAR FROM created_at) AS year")
+                         .from(users.table)
+                         .where(users.active == true)
+                         .build();
+
+        std::cout << query << "\n";
+    }
 
     return 0;
 }

@@ -3,6 +3,7 @@
 #include <array>
 #include <string>
 #include <memory>
+#include <vector>
 
 // Define our custom configuration with larger limits for stress testing
 struct LargeConfig {
@@ -24,6 +25,31 @@ struct SmallConfig {
     static constexpr bool ThrowOnError = false;
 };
 
+// Define a tiny configuration for embedded systems or extremely constrained environments
+struct TinyConfig {
+    static constexpr size_t MaxColumns = 4;
+    static constexpr size_t MaxConditions = 2;
+    static constexpr size_t MaxJoins = 1;
+    static constexpr size_t MaxOrderBy = 1;
+    static constexpr size_t MaxGroupBy = 1;
+    static constexpr bool ThrowOnError = false;
+};
+
+// Define example enum types
+enum class UserStatus : int {
+    Active = 1,
+    Inactive = 0,
+    Pending = 2
+};
+
+enum class OrderStatus : int {
+    New = 0,
+    Processing = 1,
+    Shipped = 2,
+    Delivered = 3,
+    Cancelled = 4
+};
+
 // Define tables using the macros
 SQL_DEFINE_TABLE(users)
 SQL_DEFINE_COLUMN(id, int64_t)
@@ -40,6 +66,7 @@ SQL_DEFINE_COLUMN(country, std::string)
 SQL_DEFINE_COLUMN(zip_code, std::string)
 SQL_DEFINE_COLUMN(active, bool)
 SQL_DEFINE_COLUMN(verified, bool)
+SQL_DEFINE_COLUMN(status, UserStatus)
 SQL_DEFINE_COLUMN(created_at, std::string)
 SQL_DEFINE_COLUMN(updated_at, std::string)
 SQL_END_TABLE()
@@ -50,7 +77,7 @@ SQL_DEFINE_COLUMN(user_id, int64_t)
 SQL_DEFINE_COLUMN(order_number, std::string)
 SQL_DEFINE_COLUMN(order_date, std::string)
 SQL_DEFINE_COLUMN(total_amount, double)
-SQL_DEFINE_COLUMN(status, std::string)
+SQL_DEFINE_COLUMN(status, OrderStatus)
 SQL_DEFINE_COLUMN(shipping_address, std::string)
 SQL_DEFINE_COLUMN(shipping_city, std::string)
 SQL_DEFINE_COLUMN(shipping_state, std::string)
@@ -91,11 +118,54 @@ SQL_DEFINE_COLUMN(created_at, std::string)
 SQL_DEFINE_COLUMN(updated_at, std::string)
 SQL_END_TABLE()
 
+SQL_DEFINE_TABLE(categories)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(name, std::string)
+SQL_DEFINE_COLUMN(description, std::string)
+SQL_DEFINE_COLUMN(parent_id, int64_t)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_DEFINE_COLUMN(updated_at, std::string)
+SQL_END_TABLE()
+
+SQL_DEFINE_TABLE(reviews)
+SQL_DEFINE_COLUMN(id, int64_t)
+SQL_DEFINE_COLUMN(product_id, int64_t)
+SQL_DEFINE_COLUMN(user_id, int64_t)
+SQL_DEFINE_COLUMN(rating, int)
+SQL_DEFINE_COLUMN(comment, std::string)
+SQL_DEFINE_COLUMN(created_at, std::string)
+SQL_END_TABLE()
+
+// Custom table configs
+struct users_table_small : public users_table {
+    using config_type = SmallConfig;
+};
+
+struct users_table_large : public users_table {
+    using config_type = LargeConfig;
+};
+
+struct users_table_tiny : public users_table {
+    using config_type = TinyConfig;
+};
+
 // Global table instances for benchmarks
 const users_table users;
+const users_table_small users_small;
+const users_table_large users_large;
+const users_table_tiny users_tiny;
 const orders_table orders;
 const order_items_table order_items;
 const products_table products;
+const categories_table categories;
+const reviews_table reviews;
+
+// Create a list of standard conditions for reuse
+std::string getActiveCond() { return (users.active == true).toString(); }
+std::string getVerifiedCond() { return (users.verified == true).toString(); }
+std::string getJoinCond() { return (users.id == orders.user_id).toString(); }
+std::string getOrderJoinCond() { return (orders.id == order_items.order_id).toString(); }
+std::string getProductJoinCond() { return (order_items.product_id == products.id).toString(); }
 
 // Benchmark for simple SELECT query
 static void BM_SimpleSelect(benchmark::State& state) {
@@ -107,7 +177,6 @@ static void BM_SimpleSelect(benchmark::State& state) {
             .orderBy(users.username)
             .build();
 
-        // Prevent the compiler from optimizing away the query construction
         benchmark::DoNotOptimize(query);
     }
 }
@@ -124,14 +193,11 @@ static void BM_ComplexJoin(benchmark::State& state) {
             order_items.quantity
             )
             .from(users.table)
-            .innerJoin(orders.table,
-                       (users.id == orders.user_id).toString())
-            .innerJoin(order_items.table,
-                       (orders.id == order_items.order_id).toString())
-            .innerJoin(products.table,
-                       (order_items.product_id == products.id).toString())
+            .innerJoin(orders.table, getJoinCond())
+            .innerJoin(order_items.table, getOrderJoinCond())
+            .innerJoin(products.table, getProductJoinCond())
             .where((users.active == true) &&
-                   (orders.status == "completed") &&
+                   (orders.status == OrderStatus::Delivered) &&
                    (products.active == true))
             .orderBy(orders.created_at, false)
             .build();
@@ -189,6 +255,54 @@ static void BM_Insert(benchmark::State& state) {
 }
 BENCHMARK(BM_Insert);
 
+// Benchmark for INSERT OR REPLACE
+static void BM_InsertOrReplace(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .insertOrReplace(users.table)
+            .value(users.id, 1)
+            .value(users.username, "john_doe")
+            .value(users.email, "john@example.com")
+            .value(users.password, "password123")
+            .value(users.active, true)
+            .value(users.verified, true)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_InsertOrReplace);
+
+// Benchmark for UPDATE
+static void BM_Update(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .update(users.table)
+            .set(users.username, "new_username")
+            .set(users.email, "new_email@example.com")
+            .set(users.updated_at, "2023-01-02 12:00:00")
+            .where(users.id == 1)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_Update);
+
+// Benchmark for DELETE
+static void BM_Delete(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .deleteFrom(users.table)
+            .where(users.active == false)
+            .where(users.created_at < "2022-01-01")
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_Delete);
+
 // Benchmark for builder reuse
 static void BM_QueryReuse(benchmark::State& state) {
     sql::QueryBuilder<> builder;
@@ -214,7 +328,75 @@ static void BM_QueryReuse(benchmark::State& state) {
 }
 BENCHMARK(BM_QueryReuse);
 
-// Benchmark for stack-allocated queries with SmallConfig
+// Benchmark with different config sizes
+static void BM_TinyConfig(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<TinyConfig>()
+        .select(users.id, users.username, users.email)
+            .from(users.table)
+            .where(users.active == true)
+            .orderBy(users.username)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_TinyConfig);
+
+static void BM_SmallConfig(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<SmallConfig>()
+        .select(users.id, users.username, users.email, users.created_at)
+            .from(users.table)
+            .where(users.active == true)
+            .where(users.verified == true)
+            .orderBy(users.username)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_SmallConfig);
+
+static void BM_DefaultConfig(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username, users.email, users.created_at, users.updated_at)
+            .from(users.table)
+            .where(users.active == true)
+            .where(users.verified == true)
+            .where(users.created_at >= "2023-01-01")
+            .orderBy(users.username)
+            .orderBy(users.created_at, false)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_DefaultConfig);
+
+static void BM_LargeConfig(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<LargeConfig>()
+        .select(users.id, users.username, users.email, users.first_name, users.last_name,
+                users.phone, users.address, users.city, users.state, users.country)
+            .from(users.table)
+            .where(users.active == true)
+            .where(users.verified == true)
+            .where(users.created_at >= "2023-01-01")
+            .where(users.city == "New York")
+            .where(users.state == "NY")
+            .where(users.country == "USA")
+            .orderBy(users.username)
+            .orderBy(users.created_at, false)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_LargeConfig);
+
+// Stack vs. Heap Allocation
 static void BM_StackAllocated(benchmark::State& state) {
     sql::QueryBuilder<SmallConfig> builder;
 
@@ -243,7 +425,6 @@ static void BM_StackAllocated(benchmark::State& state) {
 }
 BENCHMARK(BM_StackAllocated);
 
-// Benchmark for heap-allocated queries with SmallConfig
 static void BM_HeapAllocated(benchmark::State& state) {
     for (auto _ : state) {
         for (int i = 0; i < 10; i++) {
@@ -262,6 +443,48 @@ static void BM_HeapAllocated(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_HeapAllocated);
+
+// String type comparison
+static void BM_StringView(benchmark::State& state) {
+    using namespace std::string_view_literals;
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select("id"sv, "username"sv, "email"sv)
+            .from("users"sv)
+            .where(sql::col("active") == true)
+            .where(sql::col("verified") == true)
+            .where(sql::col("city") == "New York"sv)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_StringView);
+
+static void BM_StdString(benchmark::State& state) {
+    std::string id = "id";
+    std::string username = "username";
+    std::string email = "email";
+    std::string usersTable = "users";
+    std::string active = "active";
+    std::string verified = "verified";
+    std::string city = "city";
+    std::string newYork = "New York";
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(id, username, email)
+            .from(usersTable)
+            .where(sql::col(active) == true)
+            .where(sql::col(verified) == true)
+            .where(sql::col(city) == newYork)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_StdString);
 
 // Comparing string-based vs typed column interface
 static void BM_StringBasedInterface(benchmark::State& state) {
@@ -294,47 +517,267 @@ static void BM_TypedInterface(benchmark::State& state) {
 }
 BENCHMARK(BM_TypedInterface);
 
-// Test cross-config interoperability
-static void BM_CrossConfigInteroperability(benchmark::State& state) {
+// Cross-config compatibility tests
+static void BM_CrossConfig_DefaultWithTinyCol(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users_tiny.id, users_tiny.username)
+            .from(users_tiny.table)
+            .where(users_tiny.active == true)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_CrossConfig_DefaultWithTinyCol);
+
+static void BM_CrossConfig_LargeWithDefaultCol(benchmark::State& state) {
     for (auto _ : state) {
         auto query = sql::QueryBuilder<LargeConfig>()
         .select(users.id, users.username, users.email)
             .from(users.table)
-            .where(users.active == true)  // DefaultConfig column with LargeConfig builder
-            .orderBy(users.username)
+            .where(users.active == true)
             .build();
 
         benchmark::DoNotOptimize(query);
     }
 }
-BENCHMARK(BM_CrossConfigInteroperability);
+BENCHMARK(BM_CrossConfig_LargeWithDefaultCol);
 
-// Test string literal handling performance
-static void BM_StringLiteralHandling(benchmark::State& state) {
+// Aggregate function tests
+static void BM_AggregateFunction(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(
+            sql::count(users.id).c_str(),
+            sql::avg(orders.total_amount).c_str(),
+            sql::max(orders.total_amount).c_str(),
+            sql::min(orders.total_amount).c_str())
+            .from(users.table)
+            .leftJoin(orders.table, getJoinCond())
+            .where(users.active == true)
+            .groupBy(users.id)
+            .having("COUNT(orders.id) > 0")
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_AggregateFunction);
+
+// Advanced features
+static void BM_WhereNull(benchmark::State& state) {
     for (auto _ : state) {
         auto query = sql::QueryBuilder<>()
         .select(users.id, users.username)
             .from(users.table)
-            .where(users.email == "example@mail.com")  // String literal
-            .where(users.city == "New York")  // String literal
-            .where(users.username == "johndoe")  // String literal
+            .whereNull(users.email)
             .build();
 
         benchmark::DoNotOptimize(query);
     }
 }
-BENCHMARK(BM_StringLiteralHandling);
+BENCHMARK(BM_WhereNull);
 
-// Memory usage benchmarks
+static void BM_WhereNotNull(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username)
+            .from(users.table)
+            .whereNotNull(users.email)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_WhereNotNull);
+
+static void BM_WhereBetween(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(orders.id, orders.total_amount)
+            .from(orders.table)
+            .whereBetween(orders.total_amount, 100.0, 500.0)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_WhereBetween);
+
+static void BM_WhereIn(benchmark::State& state) {
+    // Create a list of IDs
+    std::array<int64_t, 5> ids = {1, 2, 3, 4, 5};
+
+    std::span<const int64_t> idsSpan(ids);
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username)
+            .from(users.table)
+            .whereIn(users.id, idsSpan)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_WhereIn);
+
+static void BM_WhereLike(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username, users.email)
+            .from(users.table)
+            .whereLike(users.email, "%@gmail.com")
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_WhereLike);
+
+// Complex operator tests
+static void BM_ComplexOperators(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username)
+            .from(users.table)
+            .where(
+                (users.active == true && users.verified == true) ||
+                (users.created_at >= "2023-01-01" && users.country == "USA")
+                )
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_ComplexOperators);
+
+// Multiple joins with different join types
+static void BM_MultipleJoinTypes(benchmark::State& state) {
+    std::string productsJoin = (categories.id == products.category_id).toString();
+    std::string reviewsJoin = (products.id == reviews.product_id).toString();
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(
+            products.id,
+            products.name,
+            categories.name,
+            "AVG(reviews.rating) as avg_rating"
+            )
+            .from(products.table)
+            .innerJoin(categories.table, productsJoin)
+            .leftJoin(reviews.table, reviewsJoin)
+            .where(products.active == true)
+            .groupBy(products.id)
+            .groupBy(products.name)
+            .groupBy(categories.name)
+            .having("COUNT(reviews.id) > 0")
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_MultipleJoinTypes);
+
+// Simulate common query patterns
+static void BM_LoginQuery(benchmark::State& state) {
+    std::string email = "user@example.com";
+    std::string password = "hashedpassword123";
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(users.id, users.username, users.email)
+            .from(users.table)
+            .where(users.email == email)
+            .where(users.password == password)
+            .where(users.active == true)
+            .limit(1)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_LoginQuery);
+
+static void BM_ProductListingQuery(benchmark::State& state) {
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(
+            products.id,
+            products.name,
+            products.price,
+            products.description,
+            categories.name
+            )
+            .from(products.table)
+            .leftJoin(categories.table, (categories.id == products.category_id).toString())
+            .where(products.active == true)
+            .where(products.stock_quantity > 0)
+            .orderBy(products.price)
+            .limit(20)
+            .offset(0)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_ProductListingQuery);
+
+static void BM_OrderHistoryQuery(benchmark::State& state) {
+    int64_t userId = 42;
+
+    for (auto _ : state) {
+        auto query = sql::QueryBuilder<>()
+        .select(
+            orders.id,
+            orders.order_number,
+            orders.order_date,
+            orders.total_amount,
+            orders.status,
+            "COUNT(order_items.id) as item_count"
+            )
+            .from(orders.table)
+            .leftJoin(order_items.table, (orders.id == order_items.order_id).toString())
+            .where(orders.user_id == userId)
+            .groupBy(orders.id)
+            .groupBy(orders.order_number)
+            .groupBy(orders.order_date)
+            .groupBy(orders.total_amount)
+            .groupBy(orders.status)
+            .orderBy(orders.order_date, false)
+            .build();
+
+        benchmark::DoNotOptimize(query);
+    }
+}
+BENCHMARK(BM_OrderHistoryQuery);
+
+// Memory footprint benchmarks
+static void BM_TinyConfigMemoryFootprint(benchmark::State& state) {
+    for (auto _ : state) {
+        sql::QueryBuilder<TinyConfig> builder;
+        benchmark::DoNotOptimize(builder);
+    }
+}
+BENCHMARK(BM_TinyConfigMemoryFootprint);
+
 static void BM_SmallConfigMemoryFootprint(benchmark::State& state) {
-    // This benchmark measures the construction time as a proxy for measuring
-    // memory allocation overhead
     for (auto _ : state) {
         sql::QueryBuilder<SmallConfig> builder;
         benchmark::DoNotOptimize(builder);
     }
 }
 BENCHMARK(BM_SmallConfigMemoryFootprint);
+
+static void BM_DefaultConfigMemoryFootprint(benchmark::State& state) {
+    for (auto _ : state) {
+        sql::QueryBuilder<> builder;
+        benchmark::DoNotOptimize(builder);
+    }
+}
+BENCHMARK(BM_DefaultConfigMemoryFootprint);
 
 static void BM_LargeConfigMemoryFootprint(benchmark::State& state) {
     for (auto _ : state) {
