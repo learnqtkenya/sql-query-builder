@@ -15,6 +15,55 @@ A lightweight, header-only C++20 SQL query builder with type safety, stack alloc
 - Config-aware typed tables and columns (sqlpp11-like interface)
 - Cross-configuration interoperability
 
+```
+Run on (8 X 3800 MHz CPU s)
+CPU Caches:
+  L1 Data 32 KiB (x4)
+  L1 Instruction 32 KiB (x4)
+  L2 Unified 256 KiB (x4)
+  L3 Unified 6144 KiB (x1)
+Load Average: 0.71, 1.18, 1.19
+***WARNING*** CPU scaling is enabled, the benchmark real time measurements may be noisy and will incur extra overhead.
+***WARNING*** Library was built as DEBUG. Timings may be affected.
+-----------------------------------------------------------------------------
+Benchmark                                   Time             CPU   Iterations
+-----------------------------------------------------------------------------
+BM_SimpleSelect                          3006 ns         3001 ns       227440
+BM_ComplexJoin                           9389 ns         9388 ns        70313
+BM_ManyConditions                       14537 ns        14536 ns        47741
+BM_Insert                               15223 ns        15221 ns        47533
+BM_InsertOrReplace                       6505 ns         6504 ns       104497
+BM_Update                                6556 ns         6556 ns        99877
+BM_Delete                                4050 ns         4050 ns       162750
+BM_QueryReuse                           11478 ns        11486 ns        60531
+BM_TinyConfig                            2494 ns         2494 ns       282078
+BM_SmallConfig                           3856 ns         3856 ns       178098
+BM_DefaultConfig                         5238 ns         5237 ns       123143
+BM_LargeConfig                          13398 ns        13397 ns        51680
+BM_StackAllocated                       71001 ns        71025 ns         9053
+BM_HeapAllocated                        72753 ns        72752 ns         9089
+BM_StringView                            4932 ns         4931 ns       133363
+BM_StdString                             4370 ns         4370 ns       139496
+BM_StringBasedInterface                  5115 ns         5115 ns       126238
+BM_TypedInterface                        4875 ns         4875 ns       133993
+BM_CrossConfig_DefaultWithTinyCol        2777 ns         2776 ns       250987
+BM_CrossConfig_LargeWithDefaultCol       5841 ns         5840 ns       116298
+BM_AggregateFunction                     4181 ns         4180 ns       172439
+BM_WhereNull                             2232 ns         2232 ns       287084
+BM_WhereNotNull                          2309 ns         2309 ns       311189
+BM_WhereBetween                          3576 ns         3576 ns       204081
+BM_WhereIn                               3840 ns         3840 ns       169375
+BM_WhereLike                             3341 ns         3341 ns       206663
+BM_ComplexOperators                     10308 ns        10308 ns        68389
+BM_MultipleJoinTypes                     3632 ns         3631 ns       201160
+BM_LoginQuery                            4215 ns         4215 ns       157640
+BM_ProductListingQuery                   4695 ns         4695 ns       131211
+BM_OrderHistoryQuery                     4210 ns         4209 ns       169252
+BM_TinyConfigMemoryFootprint              118 ns          118 ns      5946566
+BM_SmallConfigMemoryFootprint             300 ns          300 ns      2299831
+BM_DefaultConfigMemoryFootprint           510 ns          509 ns      1290805
+BM_LargeConfigMemoryFootprint            2330 ns         2329 ns       301362
+```
 ## Basic Usage
 
 ### String-based API
