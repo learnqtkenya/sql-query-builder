@@ -11,6 +11,7 @@
 #include <cassert>
 #include <optional>
 #include <cstdint>
+#include <memory>
 
 // Optional Qt support
 #ifdef SQLQUERYBUILDER_USE_QT
@@ -313,6 +314,17 @@ public:
     [[nodiscard]] bool isNull() const { return std::holds_alternative<std::monostate>(storage_); }
 };
 
+// Forward declaration
+template<typename Config>
+class Condition;
+
+template<typename Config>
+struct CompoundCondition {
+    Condition<Config> left;
+    Condition<Config> right;
+    typename Condition<Config>::Op op;
+};
+
 template<typename Config>
 class Condition {
 public:
@@ -359,12 +371,10 @@ private:
     // For raw SQL
     std::string_view raw_sql_;
 
-    // For compound conditions - store pointers to the operands
-    // Note: Operands must outlive the compound condition!
-    struct {
-        const Condition* left = nullptr;
-        const Condition* right = nullptr;
-    } compound_;
+    // For compound conditions
+    // Use a single unique_ptr for compound conditions only
+    // This is the only place where we'll accept heap allocation
+    std::unique_ptr<CompoundCondition<Config>> compound_;
 
     // For IN conditions
     std::array<SqlValue<Config>, Config::MaxInValues> in_values_{};
@@ -465,16 +475,58 @@ public:
         return cond;
     }
 
-    // Copy constructor - needed for compound conditions
-    Condition(const Condition& other) = default;
+    // Copy constructor (including compound conditions)
+    Condition(const Condition& other)
+        : type_(other.type_), op_(other.op_), negated_(other.negated_),
+        column_(other.column_), table_(other.table_),
+        values_(other.values_), value_count_(other.value_count_),
+        right_column_(other.right_column_), right_table_(other.right_table_),
+        raw_sql_(other.raw_sql_),
+        in_values_(other.in_values_), in_values_count_(other.in_values_count_) {
+
+        // Deep copy compound condition if present
+        if (other.compound_) {
+            compound_ = std::make_unique<CompoundCondition<Config>>(*other.compound_);
+        }
+    }
+
+    // Move constructor
+    Condition(Condition&& other) noexcept = default;
+
+    // Assignment operator
+    Condition& operator=(const Condition& other) {
+        if (this != &other) {
+            type_ = other.type_;
+            op_ = other.op_;
+            negated_ = other.negated_;
+            column_ = other.column_;
+            table_ = other.table_;
+            values_ = other.values_;
+            value_count_ = other.value_count_;
+            right_column_ = other.right_column_;
+            right_table_ = other.right_table_;
+            raw_sql_ = other.raw_sql_;
+            in_values_ = other.in_values_;
+            in_values_count_ = other.in_values_count_;
+
+            // Deep copy compound condition if present
+            if (other.compound_) {
+                compound_ = std::make_unique<CompoundCondition<Config>>(*other.compound_);
+            } else {
+                compound_.reset();
+            }
+        }
+        return *this;
+    }
+
+    // Move assignment operator
+    Condition& operator=(Condition&& other) noexcept = default;
 
     // Cross-config copy constructor
     template<typename OtherConfig>
     Condition(const Condition<OtherConfig>& other) {
         // For cross-config conversion, we'll use the string representation
         type_ = Type::Raw;
-        // We need to create a persistent string here since the original might be temporary
-        // This is a compromise - one allocation for cross-config conversions
         raw_sql_ = other.toString();
     }
 
@@ -491,10 +543,11 @@ public:
         result.type_ = Type::Compound;
         result.op_ = Op::And;
 
-        // Store references to the operands
-        // This requires the operands to outlive the compound condition!
-        result.compound_.left = this;
-        result.compound_.right = &other;
+        // Create compound condition
+        result.compound_ = std::make_unique<CompoundCondition<Config>>();
+        result.compound_->left = *this;
+        result.compound_->right = other;
+        result.compound_->op = Op::And;
 
         return result;
     }
@@ -505,9 +558,11 @@ public:
         result.type_ = Type::Compound;
         result.op_ = Op::Or;
 
-        // Store references to the operands
-        result.compound_.left = this;
-        result.compound_.right = &other;
+        // Create compound condition
+        result.compound_ = std::make_unique<CompoundCondition<Config>>();
+        result.compound_->left = *this;
+        result.compound_->right = other;
+        result.compound_->op = Op::Or;
 
         return result;
     }
@@ -557,11 +612,11 @@ public:
             break;
 
         case Type::Compound:
-            if (compound_.left && compound_.right) {
+            if (compound_) {
                 oss << "(";
-                compound_.left->toString(oss);
+                compound_->left.toString(oss);
                 oss << ") " << opToString(op_) << " (";
-                compound_.right->toString(oss);
+                compound_->right.toString(oss);
                 oss << ")";
             } else {
                 oss << "INVALID COMPOUND CONDITION";
@@ -954,6 +1009,60 @@ inline std::ostream& operator<<(std::ostream& os, const QString& str) {
 }
 #endif
 
+// SQL function types
+enum class SqlFunction {
+    None,
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+    GroupConcat
+};
+
+// Column reference
+template<typename Config = DefaultConfig>
+class ColumnRef {
+private:
+    std::string_view column_;
+    SqlFunction function_ = SqlFunction::None;
+
+public:
+    ColumnRef() = default;
+
+    explicit ColumnRef(std::string_view column, SqlFunction function = SqlFunction::None)
+        : column_(column), function_(function) {}
+
+    std::string_view column() const { return column_; }
+    SqlFunction function() const { return function_; }
+
+    void toSql(std::ostringstream& oss) const {
+        switch (function_) {
+        case SqlFunction::Count:
+            oss << "COUNT(" << column_ << ")";
+            break;
+        case SqlFunction::Sum:
+            oss << "SUM(" << column_ << ")";
+            break;
+        case SqlFunction::Avg:
+            oss << "AVG(" << column_ << ")";
+            break;
+        case SqlFunction::Min:
+            oss << "MIN(" << column_ << ")";
+            break;
+        case SqlFunction::Max:
+            oss << "MAX(" << column_ << ")";
+            break;
+        case SqlFunction::GroupConcat:
+            oss << "GROUP_CONCAT(" << column_ << ")";
+            break;
+        case SqlFunction::None:
+        default:
+            oss << column_;
+            break;
+        }
+    }
+};
 // Join class
 template<typename Config>
 class Join {
@@ -1001,7 +1110,7 @@ private:
     QueryType type_{QueryType::Select};
     std::string_view table_;
 
-    std::array<std::string_view, Config::MaxColumns> select_columns_{};
+    std::array<ColumnRef<Config>, Config::MaxColumns> select_columns_{};
     size_t select_columns_count_{0};
 
     std::array<std::pair<std::string_view, SqlValue<Config>>, Config::MaxColumns> values_{};
@@ -1098,7 +1207,7 @@ public:
 
         for (const auto& col : cols) {
             if constexpr (std::is_convertible_v<T, std::string_view>) {
-                select_columns_[select_columns_count_++] = static_cast<std::string_view>(col);
+                select_columns_[select_columns_count_++] = ColumnRef<Config>(static_cast<std::string_view>(col));
             }
         }
         return *this;
@@ -1106,10 +1215,13 @@ public:
 
     template<typename T>
     void addSelectColumn(const T& col) {
-        if constexpr (std::is_convertible_v<T, std::string_view>) {
-            select_columns_[select_columns_count_++] = static_cast<std::string_view>(col);
+        if constexpr (std::is_same_v<std::remove_cvref_t<T>, ColumnRef<Config>>) {
+            select_columns_[select_columns_count_++] = col;
+        } else if constexpr (std::is_convertible_v<T, std::string_view>) {
+            select_columns_[select_columns_count_++] = ColumnRef<Config>(static_cast<std::string_view>(col));
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, ColumnRef<Config>>,
                           "Column type not supported for select");
         }
     }
@@ -1715,7 +1827,7 @@ private:
             bool first = true;
             for (size_t i = 0; i < select_columns_count_; ++i) {
                 if (!first) oss << ", ";
-                oss << select_columns_[i];
+                select_columns_[i].toSql(oss);
                 first = false;
             }
         }
@@ -1864,37 +1976,28 @@ private:
 // SQL Aggregate Functions
 //=====================
 
-// Function to create SQL aggregate function strings
-// We return std::string here because these are typically used as temporary values
-// in select() calls, so we can't use string_view which would be referring to
-// temporary data.
-
-inline std::string count(std::string_view column) {
-    return std::string("COUNT(") + std::string(column) + ")";
+inline ColumnRef<> count(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::Count);
 }
 
-inline std::string countDistinct(std::string_view column) {
-    return std::string("COUNT(DISTINCT ") + std::string(column) + ")";
+inline ColumnRef<> sum(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::Sum);
 }
 
-inline std::string sum(std::string_view column) {
-    return std::string("SUM(") + std::string(column) + ")";
+inline ColumnRef<> avg(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::Avg);
 }
 
-inline std::string avg(std::string_view column) {
-    return std::string("AVG(") + std::string(column) + ")";
+inline ColumnRef<> min(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::Min);
 }
 
-inline std::string min(std::string_view column) {
-    return std::string("MIN(") + std::string(column) + ")";
+inline ColumnRef<> max(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::Max);
 }
 
-inline std::string max(std::string_view column) {
-    return std::string("MAX(") + std::string(column) + ")";
-}
-
-inline std::string groupConcat(std::string_view column) {
-    return std::string("GROUP_CONCAT(") + std::string(column) + ")";
+inline ColumnRef<> groupConcat(std::string_view column) {
+    return ColumnRef<>(column, SqlFunction::GroupConcat);
 }
 
 // Function to create an alias

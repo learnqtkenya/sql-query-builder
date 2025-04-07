@@ -551,10 +551,10 @@ static void BM_AggregateFunction(benchmark::State& state) {
     for (auto _ : state) {
         auto query = sql::QueryBuilder<>()
         .select(
-            sql::count(users.id).c_str(),
-            sql::avg(orders.total_amount).c_str(),
-            sql::max(orders.total_amount).c_str(),
-            sql::min(orders.total_amount).c_str())
+            sql::count(users.id),
+            sql::avg(orders.total_amount),
+            sql::max(orders.total_amount),
+            sql::min(orders.total_amount))
             .from(users.table)
             .leftJoin(orders.table, getJoinCond())
             .where(users.active == true)

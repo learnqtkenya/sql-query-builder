@@ -435,11 +435,11 @@ int main() {
 
         auto query = QueryBuilder()
                          .select(
-                             count(orders.id).c_str(),
-                             sum(orders.total).c_str(),
-                             avg(orders.total).c_str(),
-                             max(orders.total).c_str(),
-                             min(orders.total).c_str())
+                             count(orders.id),
+                             sum(orders.total),
+                             avg(orders.total),
+                             max(orders.total),
+                             min(orders.total))
                          .from(orders.table)
                          .where(orders.status == "completed")
                          .build();
