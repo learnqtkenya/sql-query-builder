@@ -3,8 +3,6 @@
 #include <iostream>
 #include <string>
 #include <array>
-#include <vector>
-#include <iomanip>
 
 // Optional: Define custom config
 struct MyConfig {
@@ -13,6 +11,7 @@ struct MyConfig {
     static constexpr size_t MaxJoins = 8;
     static constexpr size_t MaxOrderBy = 16;
     static constexpr size_t MaxGroupBy = 16;
+    static constexpr size_t MaxInValues = 32;
     static constexpr bool ThrowOnError = true;
 };
 

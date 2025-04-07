@@ -28,6 +28,7 @@ struct DefaultConfig {
     static constexpr size_t MaxJoins = 4;
     static constexpr size_t MaxOrderBy = 8;
     static constexpr size_t MaxGroupBy = 8;
+    static constexpr size_t MaxInValues = 16;
     static constexpr bool ThrowOnError = false;
 };
 
@@ -115,7 +116,6 @@ concept SqlCompatible =
 #endif
     std::same_as<std::remove_cvref_t<T>, bool>;
 
-// Forward declarations
 template<typename Config = DefaultConfig>
 class SqlValue;
 
@@ -156,14 +156,12 @@ public:
     [[nodiscard]] constexpr std::string_view tableName() const { return table_; }
     [[nodiscard]] constexpr std::string_view name() const { return name_; }
 
-    // Generate qualified name (table.column)
     [[nodiscard]] std::string qualifiedName() const {
         return std::string(table_) + "." + std::string(name_);
     }
 
     operator std::string_view() const { return name_; }
 
-    // Condition generation methods
     [[nodiscard]] Condition<Config> isNull() const;
     [[nodiscard]] Condition<Config> isNotNull() const;
 
@@ -208,6 +206,12 @@ public:
 
     template<SqlCompatible T1, SqlCompatible T2>
     [[nodiscard]] Condition<Config> between(T1&& start, T2&& end) const;
+
+    template<typename U>
+    [[nodiscard]] Condition<Config> in(std::span<const U> values) const;
+
+    template<typename U>
+    [[nodiscard]] Condition<Config> notIn(std::span<const U> values) const;
 };
 
 // SqlValue class with type-safe storage
@@ -309,246 +313,6 @@ public:
     [[nodiscard]] bool isNull() const { return std::holds_alternative<std::monostate>(storage_); }
 };
 
-// Condition class for SQL conditions
-template<typename Config>
-class ConditionStorage;
-
-template<typename Config>
-class ConditionRef {
-private:
-    size_t index_;
-    ConditionStorage<Config>* storage_;
-
-public:
-    ConditionRef() : index_(0), storage_(nullptr) {}
-    ConditionRef(size_t idx, ConditionStorage<Config>* storage)
-        : index_(idx), storage_(storage) {}
-
-    size_t index() const { return index_; }
-    ConditionStorage<Config>* storage() const { return storage_; }
-    bool isValid() const { return storage_ != nullptr; }
-
-    // Used for conditional access patterns
-    explicit operator bool() const { return isValid(); }
-};
-
-template<typename Config>
-class ConditionStorage {
-private:
-    struct ConditionData {
-        enum class Type { Simple, Compound };
-        Type type;
-
-        // For simple conditions
-        std::string_view column;
-        typename Condition<Config>::Op op;
-        std::array<SqlValue<Config>, 2> values;
-        size_t value_count;
-        bool negated;
-        std::string_view condition_str;
-
-        // For column-to-column comparisons
-        std::string_view right_column;
-        bool is_column_comparison;
-
-        // For compound conditions
-        ConditionRef<Config> left;
-        ConditionRef<Config> right;
-    };
-
-    // Fixed-size storage for conditions
-    std::array<ConditionData, Config::MaxConditions> conditions_;
-    size_t count_{0};
-
-    static ConditionStorage<Config>& instance() {
-        static ConditionStorage<Config> storage;
-        return storage;
-    }
-
-public:
-    static ConditionRef<Config> createSimple(std::string_view column,
-                                             typename Condition<Config>::Op op,
-                                             SqlValue<Config> value,
-                                             bool negated = false) {
-        auto& storage = instance();
-        if (storage.count_ >= Config::MaxConditions) {
-            return ConditionRef<Config>{};
-        }
-
-        auto& data = storage.conditions_[storage.count_];
-        data.type = ConditionData::Type::Simple;
-        data.column = column;
-        data.op = op;
-        data.values[0] = value;
-        data.value_count = 1;
-        data.negated = negated;
-        data.is_column_comparison = false;
-
-        return ConditionRef<Config>{storage.count_++, &storage};
-    }
-
-    // Create a column-to-column comparison
-    static ConditionRef<Config> createColumnComparison(std::string_view left_col,
-                                                       typename Condition<Config>::Op op,
-                                                       std::string_view right_col,
-                                                       bool negated = false) {
-        auto& storage = instance();
-        if (storage.count_ >= Config::MaxConditions) {
-            return ConditionRef<Config>{};
-        }
-
-        auto& data = storage.conditions_[storage.count_];
-        data.type = ConditionData::Type::Simple;
-        data.column = left_col;
-        data.op = op;
-        data.value_count = 0;
-        data.negated = negated;
-        data.right_column = right_col;
-        data.is_column_comparison = true;
-
-        return ConditionRef<Config>{storage.count_++, &storage};
-    }
-
-    // Create a between condition
-    static ConditionRef<Config> createBetween(std::string_view column,
-                                              SqlValue<Config> start,
-                                              SqlValue<Config> end,
-                                              bool negated = false) {
-        auto& storage = instance();
-        if (storage.count_ >= Config::MaxConditions) {
-            return ConditionRef<Config>{};
-        }
-
-        auto& data = storage.conditions_[storage.count_];
-        data.type = ConditionData::Type::Simple;
-        data.column = column;
-        data.op = Condition<Config>::Op::Between;
-        data.values[0] = start;
-        data.values[1] = end;
-        data.value_count = 2;
-        data.negated = negated;
-        data.is_column_comparison = false;
-
-        return ConditionRef<Config>{storage.count_++, &storage};
-    }
-
-    // Create a raw condition
-    static ConditionRef<Config> createRaw(std::string_view condition_str,
-                                          bool negated = false) {
-        auto& storage = instance();
-        if (storage.count_ >= Config::MaxConditions) {
-            return ConditionRef<Config>{};
-        }
-
-        auto& data = storage.conditions_[storage.count_];
-        data.type = ConditionData::Type::Simple;
-        data.column = "";
-        data.op = Condition<Config>::Op::Raw;
-        data.value_count = 0;
-        data.negated = negated;
-        data.condition_str = condition_str;
-        data.is_column_comparison = false;
-
-        return ConditionRef<Config>{storage.count_++, &storage};
-    }
-
-    // Create a compound condition (AND/OR)
-    static ConditionRef<Config> createCompound(const ConditionRef<Config>& left,
-                                               typename Condition<Config>::Op op,
-                                               const ConditionRef<Config>& right,
-                                               bool negated = false) {
-        auto& storage = instance();
-        if (storage.count_ >= Config::MaxConditions) {
-            return ConditionRef<Config>{};
-        }
-
-        auto& data = storage.conditions_[storage.count_];
-        data.type = ConditionData::Type::Compound;
-        data.op = op;
-        data.negated = negated;
-        data.left = left;
-        data.right = right;
-
-        return ConditionRef<Config>{storage.count_++, &storage};
-    }
-
-    // Get condition data
-    const ConditionData& get(size_t index) const {
-        return conditions_[index];
-    }
-
-    void toString(size_t index, std::ostringstream& oss) const {
-        const auto& data = conditions_[index];
-
-        if (data.type == ConditionData::Type::Simple) {
-            if (data.op == Condition<Config>::Op::Raw) {
-                oss << data.condition_str;
-                return;
-            }
-
-            if (data.negated) {
-                oss << "NOT (";
-            }
-
-            switch (data.op) {
-            case Condition<Config>::Op::IsNull:
-                oss << data.column << " IS NULL";
-                break;
-            case Condition<Config>::Op::IsNotNull:
-                oss << data.column << " IS NOT NULL";
-                break;
-            case Condition<Config>::Op::Between:
-                if (data.value_count == 2) {
-                    oss << data.column << " BETWEEN " << data.values[0].toSqlString()
-                    << " AND " << data.values[1].toSqlString();
-                }
-                break;
-            default:
-                const char* op_str = "";
-                switch (data.op) {
-                case Condition<Config>::Op::Eq: op_str = "="; break;
-                case Condition<Config>::Op::Ne: op_str = "!="; break;
-                case Condition<Config>::Op::Lt: op_str = "<"; break;
-                case Condition<Config>::Op::Le: op_str = "<="; break;
-                case Condition<Config>::Op::Gt: op_str = ">"; break;
-                case Condition<Config>::Op::Ge: op_str = ">="; break;
-                case Condition<Config>::Op::Like: op_str = "LIKE"; break;
-                case Condition<Config>::Op::NotLike: op_str = "NOT LIKE"; break;
-                default: break;
-                }
-
-                oss << data.column << " " << op_str << " ";
-                if (data.is_column_comparison) {
-                    oss << data.right_column;
-                } else if (data.value_count > 0) {
-                    oss << data.values[0].toSqlString();
-                }
-            }
-
-            if (data.negated) {
-                oss << ")";
-            }
-        } else if (data.type == ConditionData::Type::Compound) {
-            if (data.negated) oss << "NOT (";
-            oss << "(";
-            if (data.left.isValid()) {
-                toString(data.left.index(), oss);
-            } else {
-                oss << "NULL";
-            }
-            oss << ") " << (data.op == Condition<Config>::Op::And ? "AND" : "OR") << " (";
-            if (data.right.isValid()) {
-                toString(data.right.index(), oss);
-            } else {
-                oss << "NULL";
-            }
-            oss << ")";
-            if (data.negated) oss << ")";
-        }
-    }
-};
-
-// Condition class
 template<typename Config>
 class Condition {
 public:
@@ -563,166 +327,277 @@ public:
         Or
     };
 
-    ConditionRef<Config> ref_;
+    enum class Type : uint8_t {
+        Invalid,
+        SimpleValue,     // column OP value
+        ColumnColumn,    // column OP other_column
+        Between,         // column BETWEEN value1 AND value2
+        IsNull,          // column IS NULL
+        IsNotNull,       // column IS NOT NULL
+        Raw,             // Raw SQL string
+        Compound,        // AND/OR of two conditions
+        In               // column IN (values)
+    };
+
+private:
+    Type type_ = Type::Invalid;
+    Op op_ = Op::Eq;
+    bool negated_ = false;
+
+    // For column operations
+    std::string_view column_;
+    std::string_view table_;
+
+    // For values
+    std::array<SqlValue<Config>, 2> values_{};
+    size_t value_count_ = 0;
+
+    // For column-to-column comparisons
+    std::string_view right_column_;
+    std::string_view right_table_;
+
+    // For raw SQL
+    std::string_view raw_sql_;
+
+    // For compound conditions - store pointers to the operands
+    // Note: Operands must outlive the compound condition!
+    struct {
+        const Condition* left = nullptr;
+        const Condition* right = nullptr;
+    } compound_;
+
+    // For IN conditions
+    std::array<SqlValue<Config>, Config::MaxInValues> in_values_{};
+    size_t in_values_count_ = 0;
+
+    // Helper method to convert op to string
+    static const char* opToString(Op op) {
+        switch (op) {
+        case Op::Eq: return "=";
+        case Op::Ne: return "!=";
+        case Op::Lt: return "<";
+        case Op::Le: return "<=";
+        case Op::Gt: return ">";
+        case Op::Ge: return ">=";
+        case Op::Like: return "LIKE";
+        case Op::NotLike: return "NOT LIKE";
+        case Op::And: return "AND";
+        case Op::Or: return "OR";
+        default: return "";
+        }
+    }
 
 public:
+    // Default constructor - creates an invalid condition
     Condition() = default;
 
+    // Constructor for raw SQL conditions
     explicit Condition(std::string_view raw_condition)
-        : ref_(ConditionStorage<Config>::createRaw(raw_condition)) {}
+        : type_(Type::Raw), raw_sql_(raw_condition) {}
 
-    Condition(std::string_view col, Op op, SqlValue<Config> value)
-        : ref_(ConditionStorage<Config>::createSimple(col, op, value)) {}
+    // Constructor for column OP value conditions
+    Condition(std::string_view column, Op op, SqlValue<Config> value)
+        : type_(Type::SimpleValue), op_(op), column_(column), value_count_(1) {
+        values_[0] = value;
+    }
 
-    Condition(std::string_view left_col, Op op, std::string_view right_col)
-        : ref_(ConditionStorage<Config>::createColumnComparison(left_col, op, right_col)) {}
+    // Column-to-column comparison constructor with explicit tables
+    Condition(std::string_view left_table, std::string_view left_column,
+              Op op,
+              std::string_view right_table, std::string_view right_column)
+        : type_(Type::ColumnColumn), op_(op),
+        table_(left_table), column_(left_column),
+        right_table_(right_table), right_column_(right_column) {}
 
-    Condition(std::string_view col, Op op, SqlValue<Config> value1, SqlValue<Config> value2)
-        : ref_(ConditionStorage<Config>::createBetween(col, value1, value2)) {}
+    // Shorthand for column-to-column without explicit tables
+    Condition(std::string_view left_column, Op op, std::string_view right_column)
+        : type_(Type::ColumnColumn), op_(op),
+        column_(left_column), right_column_(right_column) {}
 
-    Condition(const Condition& lhs, Op op, const Condition& rhs)
-        : ref_(ConditionStorage<Config>::createCompound(lhs.ref_, op, rhs.ref_)) {}
+    // Between constructor
+    Condition(std::string_view column, Op op, SqlValue<Config> value1, SqlValue<Config> value2)
+        : type_(Type::Between), op_(op), column_(column), value_count_(2) {
+        values_[0] = value1;
+        values_[1] = value2;
+    }
 
+    // IS NULL constructor
+    static Condition isNull(std::string_view column) {
+        Condition cond;
+        cond.type_ = Type::IsNull;
+        cond.column_ = column;
+        return cond;
+    }
+
+    // IS NOT NULL constructor
+    static Condition isNotNull(std::string_view column) {
+        Condition cond;
+        cond.type_ = Type::IsNotNull;
+        cond.column_ = column;
+        return cond;
+    }
+
+    // For IN conditions with a fixed-size array of values
+    template<typename T>
+    static Condition in(std::string_view column, std::span<const T> values) {
+        Condition cond;
+        cond.type_ = Type::In;
+        cond.op_ = Op::In;
+        cond.column_ = column;
+
+        // Check bounds
+        const size_t count = std::min(values.size(), static_cast<size_t>(Config::MaxInValues));
+
+        // Convert each value to SqlValue
+        for (size_t i = 0; i < count; ++i) {
+            cond.in_values_[i] = SqlValue<Config>(values[i]);
+        }
+        cond.in_values_count_ = count;
+
+        return cond;
+    }
+
+    // For NOT IN conditions
+    template<typename T>
+    static Condition notIn(std::string_view column, std::span<const T> values) {
+        auto cond = in(column, values);
+        cond.op_ = Op::NotIn;
+        return cond;
+    }
+
+    // Copy constructor - needed for compound conditions
+    Condition(const Condition& other) = default;
+
+    // Cross-config copy constructor
     template<typename OtherConfig>
     Condition(const Condition<OtherConfig>& other) {
-        if (other.ref_.isValid()) {
-            std::string conditionStr = other.toString();
-            ref_ = ConditionStorage<Config>::createRaw(conditionStr);
-        }
+        // For cross-config conversion, we'll use the string representation
+        type_ = Type::Raw;
+        // We need to create a persistent string here since the original might be temporary
+        // This is a compromise - one allocation for cross-config conversions
+        raw_sql_ = other.toString();
     }
-    // Logical operators
+
+    // Negation operator
     Condition operator!() const {
-        // TODO
-        return *this; // Placeholder
+        Condition result = *this;
+        result.negated_ = !negated_;
+        return result;
     }
 
+    // Compound AND operator
     Condition operator&&(const Condition& other) const {
-        return Condition(*this, Op::And, other);
+        Condition result;
+        result.type_ = Type::Compound;
+        result.op_ = Op::And;
+
+        // Store references to the operands
+        // This requires the operands to outlive the compound condition!
+        result.compound_.left = this;
+        result.compound_.right = &other;
+
+        return result;
     }
 
+    // Compound OR operator
     Condition operator||(const Condition& other) const {
-        return Condition(*this, Op::Or, other);
+        Condition result;
+        result.type_ = Type::Compound;
+        result.op_ = Op::Or;
+
+        // Store references to the operands
+        result.compound_.left = this;
+        result.compound_.right = &other;
+
+        return result;
     }
 
-    // String conversion
+    // Convert to string for SQL generation
     void toString(std::ostringstream& oss) const {
-        if (ref_.isValid()) {
-            ref_.storage()->toString(ref_.index(), oss);
-        } else {
+        if (type_ == Type::Invalid) {
             oss << "INVALID CONDITION";
+            return;
+        }
+
+        if (negated_) {
+            oss << "NOT (";
+        }
+
+        switch (type_) {
+        case Type::Raw:
+            oss << raw_sql_;
+            break;
+
+        case Type::IsNull:
+            oss << column_ << " IS NULL";
+            break;
+
+        case Type::IsNotNull:
+            oss << column_ << " IS NOT NULL";
+            break;
+
+        case Type::Between:
+            oss << column_ << " BETWEEN " << values_[0].toSqlString()
+                << " AND " << values_[1].toSqlString();
+            break;
+
+        case Type::SimpleValue:
+            oss << column_ << " " << opToString(op_) << " " << values_[0].toSqlString();
+            break;
+
+        case Type::ColumnColumn:
+            if (!table_.empty() && !right_table_.empty()) {
+                // Fully qualified names for explicit JOINs
+                oss << table_ << "." << column_ << " " << opToString(op_) << " "
+                    << right_table_ << "." << right_column_;
+            } else {
+                // Just column names
+                oss << column_ << " " << opToString(op_) << " " << right_column_;
+            }
+            break;
+
+        case Type::Compound:
+            if (compound_.left && compound_.right) {
+                oss << "(";
+                compound_.left->toString(oss);
+                oss << ") " << opToString(op_) << " (";
+                compound_.right->toString(oss);
+                oss << ")";
+            } else {
+                oss << "INVALID COMPOUND CONDITION";
+            }
+            break;
+
+        case Type::In:
+            oss << column_ << (op_ == Op::In ? " IN (" : " NOT IN (");
+            for (size_t i = 0; i < in_values_count_; ++i) {
+                if (i > 0) oss << ", ";
+                oss << in_values_[i].toSqlString();
+            }
+            oss << ")";
+            break;
+
+        default:
+            oss << "UNKNOWN CONDITION TYPE";
+            break;
+        }
+
+        if (negated_) {
+            oss << ")";
         }
     }
 
-    [[nodiscard]] std::string toString() const {
+    // Return the string representation
+    std::string toString() const {
         std::ostringstream oss;
         toString(oss);
         return oss.str();
     }
+
+    // Helper methods for TypedColumn implementation
+    [[nodiscard]] bool isValid() const { return type_ != Type::Invalid; }
+    [[nodiscard]] Type getType() const { return type_; }
 };
-
-// TypedColumn method implementations
-template<typename T, typename Config>
-Condition<Config> TypedColumn<T, Config>::isNull() const {
-    return Condition<Config>(name_, Condition<Config>::Op::IsNull, SqlValue<Config>());
-}
-
-template<typename T, typename Config>
-Condition<Config> TypedColumn<T, Config>::isNotNull() const {
-    return Condition<Config>(name_, Condition<Config>::Op::IsNotNull, SqlValue<Config>());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::eq(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Eq, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::eq(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Eq, other.name());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::ne(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ne, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::ne(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ne, other.name());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::lt(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Lt, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::lt(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Lt, other.name());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::le(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Le, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::le(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Le, other.name());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::gt(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Gt, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::gt(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Gt, other.name());
-}
-
-template<typename T, typename Config>
-template<SqlCompatible U>
-Condition<Config> TypedColumn<T, Config>::ge(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ge, SqlValue<Config>(std::forward<U>(value)));
-}
-
-template<typename T, typename Config>
-template<typename OtherType, typename OtherConfig>
-Condition<Config> TypedColumn<T, Config>::ge(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ge, other.name());
-}
-
-template<typename T, typename Config>
-Condition<Config> TypedColumn<T, Config>::like(std::string_view pattern) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Like, SqlValue<Config>(pattern));
-}
-
-template<typename T, typename Config>
-Condition<Config> TypedColumn<T, Config>::notLike(std::string_view pattern) const {
-    return Condition<Config>(name_, Condition<Config>::Op::NotLike, SqlValue<Config>(pattern));
-}
-
-template<typename T, typename Config>
-template<SqlCompatible T1, SqlCompatible T2>
-Condition<Config> TypedColumn<T, Config>::between(T1&& start, T2&& end) const {
-    return Condition<Config>(
-        name_,
-        Condition<Config>::Op::Between,
-        SqlValue<Config>(std::forward<T1>(start)),
-        SqlValue<Config>(std::forward<T2>(end))
-        );
-}
 
 // Column class
 template<typename Config>
@@ -734,11 +609,11 @@ public:
     [[nodiscard]] std::string_view name() const { return name_; }
 
     [[nodiscard]] Condition<Config> isNull() const {
-        return Condition<Config>(name_, Condition<Config>::Op::IsNull, SqlValue<Config>());
+        return Condition<Config>::isNull(name_);
     }
 
     [[nodiscard]] Condition<Config> isNotNull() const {
-        return Condition<Config>(name_, Condition<Config>::Op::IsNotNull, SqlValue<Config>());
+        return Condition<Config>::isNotNull(name_);
     }
 
     template<SqlCompatible T>
@@ -788,7 +663,133 @@ public:
             SqlValue<Config>(std::forward<U>(end))
             );
     }
+
+    template<typename T>
+    [[nodiscard]] Condition<Config> in(std::span<const T> values) const {
+        return Condition<Config>::in(name_, values);
+    }
+
+    template<typename T>
+    [[nodiscard]] Condition<Config> notIn(std::span<const T> values) const {
+        return Condition<Config>::notIn(name_, values);
+    }
 };
+
+// TypedColumn
+template<typename T, typename Config>
+Condition<Config> TypedColumn<T, Config>::isNull() const {
+    return Condition<Config>::isNull(name_);
+}
+
+template<typename T, typename Config>
+Condition<Config> TypedColumn<T, Config>::isNotNull() const {
+    return Condition<Config>::isNotNull(name_);
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::eq(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Eq, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::eq(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Eq, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::ne(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Ne, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::ne(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Ne, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::lt(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Lt, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::lt(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Lt, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::le(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Le, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::le(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Le, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::gt(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Gt, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::gt(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Gt, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+template<SqlCompatible U>
+Condition<Config> TypedColumn<T, Config>::ge(U&& value) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Ge, SqlValue<Config>(std::forward<U>(value)));
+}
+
+template<typename T, typename Config>
+template<typename OtherType, typename OtherConfig>
+Condition<Config> TypedColumn<T, Config>::ge(const TypedColumn<OtherType, OtherConfig>& other) const {
+    return Condition<Config>(table_, name_, Condition<Config>::Op::Ge, other.tableName(), other.name());
+}
+
+template<typename T, typename Config>
+Condition<Config> TypedColumn<T, Config>::like(std::string_view pattern) const {
+    return Condition<Config>(name_, Condition<Config>::Op::Like, SqlValue<Config>(pattern));
+}
+
+template<typename T, typename Config>
+Condition<Config> TypedColumn<T, Config>::notLike(std::string_view pattern) const {
+    return Condition<Config>(name_, Condition<Config>::Op::NotLike, SqlValue<Config>(pattern));
+}
+
+template<typename T, typename Config>
+template<SqlCompatible T1, SqlCompatible T2>
+Condition<Config> TypedColumn<T, Config>::between(T1&& start, T2&& end) const {
+    return Condition<Config>(
+        name_,
+        Condition<Config>::Op::Between,
+        SqlValue<Config>(std::forward<T1>(start)),
+        SqlValue<Config>(std::forward<T2>(end))
+        );
+}
+
+template<typename T, typename Config>
+template<typename U>
+Condition<Config> TypedColumn<T, Config>::in(std::span<const U> values) const {
+    return Condition<Config>::in(name_, values);
+}
+
+template<typename T, typename Config>
+template<typename U>
+Condition<Config> TypedColumn<T, Config>::notIn(std::span<const U> values) const {
+    return Condition<Config>::notIn(name_, values);
+}
 
 // Operator overloads for TypedColumn
 template<typename T, typename Config, SqlCompatible U>
@@ -796,7 +797,6 @@ inline Condition<Config> operator==(const TypedColumn<T, Config>& col, U&& val) 
     return col.eq(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn == TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator==(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.eq(col2);
@@ -807,7 +807,6 @@ inline Condition<Config> operator!=(const TypedColumn<T, Config>& col, U&& val) 
     return col.ne(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn != TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator!=(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.ne(col2);
@@ -818,7 +817,6 @@ inline Condition<Config> operator<(const TypedColumn<T, Config>& col, U&& val) {
     return col.lt(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn < TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator<(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.lt(col2);
@@ -829,7 +827,6 @@ inline Condition<Config> operator<=(const TypedColumn<T, Config>& col, U&& val) 
     return col.le(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn <= TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator<=(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.le(col2);
@@ -840,7 +837,6 @@ inline Condition<Config> operator>(const TypedColumn<T, Config>& col, U&& val) {
     return col.gt(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn > TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator>(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.gt(col2);
@@ -851,7 +847,6 @@ inline Condition<Config> operator>=(const TypedColumn<T, Config>& col, U&& val) 
     return col.ge(std::forward<U>(val));
 }
 
-// Modified operator for TypedColumn >= TypedColumn comparisons with different configs
 template<typename T, typename U, typename ConfigT, typename ConfigU>
 inline Condition<ConfigT> operator>=(const TypedColumn<T, ConfigT>& col1, const TypedColumn<U, ConfigU>& col2) {
     return col1.ge(col2);
@@ -996,7 +991,7 @@ public:
     }
 };
 
-// Main QueryBuilder class
+// QueryBuilder class
 template<typename Config = DefaultConfig>
 class QueryBuilder {
 public:
@@ -1456,18 +1451,34 @@ public:
             return *this;
         }
 
-        std::ostringstream condition;
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            condition << static_cast<std::string_view>(column) << " IN (";
-            for (size_t i = 0; i < values.size(); ++i) {
-                if (i > 0) condition << ", ";
-                condition << SqlValue<Config>(values[i]).toSqlString();
-            }
-            condition << ")";
-            where_conditions_[where_conditions_count_++] = Condition<Config>(condition.str());
+            auto condition = Condition<Config>::in(static_cast<std::string_view>(column), values);
+            where_conditions_[where_conditions_count_++] = std::move(condition);
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for whereIn");
+        }
+        return *this;
+    }
+
+    template<typename Col, typename T>
+    QueryBuilder& whereNotIn(const Col& column, std::span<const T> values) {
+        if (where_conditions_count_ >= Config::MaxConditions) {
+            auto error = QueryError(QueryError::Code::TooManyConditions,
+                                    std::format("Too many conditions: limit is {}", Config::MaxConditions));
+            last_error_ = error;
+            if constexpr(Config::ThrowOnError) {
+                throw error;
+            }
+            return *this;
+        }
+
+        if constexpr (std::is_convertible_v<Col, std::string_view>) {
+            auto condition = Condition<Config>::notIn(static_cast<std::string_view>(column), values);
+            where_conditions_[where_conditions_count_++] = std::move(condition);
+        } else {
+            static_assert(std::is_convertible_v<Col, std::string_view>,
+                          "Column type not supported for whereNotIn");
         }
         return *this;
     }
@@ -1536,10 +1547,8 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>(
-                static_cast<std::string_view>(column),
-                Condition<Config>::Op::IsNull,
-                SqlValue<Config>()
+            where_conditions_[where_conditions_count_++] = Condition<Config>::isNull(
+                static_cast<std::string_view>(column)
                 );
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
@@ -1561,10 +1570,8 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>(
-                static_cast<std::string_view>(column),
-                Condition<Config>::Op::IsNotNull,
-                SqlValue<Config>()
+            where_conditions_[where_conditions_count_++] = Condition<Config>::isNotNull(
+                static_cast<std::string_view>(column)
                 );
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,

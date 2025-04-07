@@ -3,7 +3,6 @@
 #include <array>
 #include <string>
 #include <memory>
-#include <vector>
 
 // Define our custom configuration with larger limits for stress testing
 struct LargeConfig {
@@ -12,6 +11,7 @@ struct LargeConfig {
     static constexpr size_t MaxJoins = 10;
     static constexpr size_t MaxOrderBy = 20;
     static constexpr size_t MaxGroupBy = 20;
+    static constexpr size_t MaxInValues = 50;
     static constexpr bool ThrowOnError = false;
 };
 
@@ -22,6 +22,7 @@ struct SmallConfig {
     static constexpr size_t MaxJoins = 4;
     static constexpr size_t MaxOrderBy = 4;
     static constexpr size_t MaxGroupBy = 4;
+    static constexpr size_t MaxInValues = 8;
     static constexpr bool ThrowOnError = false;
 };
 
@@ -32,6 +33,7 @@ struct TinyConfig {
     static constexpr size_t MaxJoins = 1;
     static constexpr size_t MaxOrderBy = 1;
     static constexpr size_t MaxGroupBy = 1;
+    static constexpr size_t MaxInValues = 2;
     static constexpr bool ThrowOnError = false;
 };
 
