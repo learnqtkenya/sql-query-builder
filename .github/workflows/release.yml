@@ -28,16 +28,12 @@ jobs:
           runVcpkgInstall: true
 
       - name: Configure, Build and Test
-        uses: lukka/run-cmake@v10
+        uses: lukka/run-cmake@v11
         with:
           configurePreset: 'default'
           configurePresetAdditionalArgs: "['-DCMAKE_BUILD_TYPE=Release']"
           buildPreset: 'default'
-          buildPresetAdditionalArgs: "['--config Release']"
           testPreset: 'default'
-          testPresetAdditionalArgs: "['--config Release']"
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
       - name: Generate changelog
         id: changelog
