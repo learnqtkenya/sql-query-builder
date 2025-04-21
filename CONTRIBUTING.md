@@ -1,6 +1,6 @@
-# Contributing to MMaterial
+# Contributing to SQLQueryBuilder
 
-Thank you for considering contributing to our project! We value your time and effort in improving this project, and we want to ensure that the contributions align with the project's goals and standards. Below are the guidelines for contributing effectively.
+Thank you for considering contributing to SQLQueryBuilder! This modern C++ library aims to provide a type-safe, efficient SQL query builder with minimal heap allocations. We value your input and want to ensure your contributions align with the project's design philosophy.
 
 ---
 
@@ -8,8 +8,9 @@ Thank you for considering contributing to our project! We value your time and ef
 1. [Getting Started](#getting-started)
 2. [Coding Conventions](#coding-conventions)
 3. [Development Environment](#development-environment)
-4. [Submitting Contributions](#submitting-contributions)
-5. [Code of Conduct](#code-of-conduct)
+4. [Testing Guidelines](#testing-guidelines)
+5. [Submitting Contributions](#submitting-contributions)
+6. [Code of Conduct](#code-of-conduct)
 
 ---
 
@@ -19,7 +20,7 @@ Thank you for considering contributing to our project! We value your time and ef
    Begin by forking this repository and cloning your fork locally.
 
 2. **Create a Branch**  
-   Use a descriptive branch name to explain the feature or fix you are working on, e.g., `feature/new-feature` or `bugfix/fix-issue`.
+   Use a descriptive branch name following the format `feature/description` or `fix/issue-description`.
 
 3. **Stay Up-to-Date**  
    Regularly pull changes from the main branch to avoid merge conflicts.
@@ -28,53 +29,87 @@ Thank you for considering contributing to our project! We value your time and ef
 
 ## Coding Conventions
 
-To maintain consistency across the codebase, we adhere to **Qt's QML Coding Conventions** and **Qt Quick Best Practices**. Please review and follow the guidelines outlined in the official documentation:
+SQLQueryBuilder follows modern C++ best practices with a focus on performance and type safety:
 
-- [QML Coding Conventions](https://doc-snapshots.qt.io/qt6-dev/qml-codingconventions.html)
-- [Qt Quick Best Practices](https://doc-snapshots.qt.io/qt6-dev/qtquick-bestpractices.html)
-
-Key points to remember:
-- Use descriptive, camelCase names for variables and functions.
-- Ensure proper indentation.
-- Avoid unnecessary bindings; keep expressions simple.
-- Use `parent` sparingly and thoughtfully.
-- Make sure to declare types in JS instead of using `var`.
+- Use **C++17/20 features** including [concepts](https://en.cppreference.com/w/cpp/language/constraints), [`std::string_view`](https://en.cppreference.com/w/cpp/string/basic_string_view), and [`std::span`](https://en.cppreference.com/w/cpp/container/span)
+- Maintain a [zero-heap allocation](https://www.youtube.com/watch?v=LIb3L4vKZ7U) philosophy where possible
+- Follow naming conventions aligned with [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html):
+  - `camelCase` for methods and variables
+  - `snake_case` with trailing underscores for private members (`name_`)
+  - `PascalCase` for class names
+- Apply [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) for:
+  - [Strong typing](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#S-type)
+  - [Const correctness](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#con-constants-and-immutability)
+  - Use the `[[nodiscard]]` attribute for methods that produce values meant to be used
+- String handling guidelines:
+  - Prefer `std::string_view` for non-owning references following [abseil's string_view guide](https://abseil.io/tips/1)
+  - Use `std::string` when string ownership is required for persistence
+  - Be extremely careful about string ownership when constructing complex conditions
+- Use the `inline namespace v1` pattern for API versioning
+- Document all public APIs with [Doxygen-style](https://www.doxygen.nl/manual/docblocks.html) comments
+- Include examples for complex functionality
 
 ---
 
 ## Development Environment
 
-This project targets the **newest version of Qt** available. All contributors should:
-- Use the latest stable or development version of Qt.
-- Test code on the newest features and APIs introduced in the latest Qt release.
-- Avoid deprecated or obsolete functions.
+- **Compiler**: Use a modern C++ compiler supporting C++17 or later
+  - GCC 9+
+  - Clang 10+
+  - MSVC 2019+ with `/std:c++17` or higher
+- **Build System**: CMake 3.14 or newer
+- **Optional Dependencies**:
+  - Qt 5.15+ or Qt 6.x for Qt integration features
+  - Catch2 for testing
 
-If a feature requires the use of a specific Qt version, clearly document this in your pull request.
+Configure your environment with:
+```bash
+mkdir build && cd build
+cmake .. -DBUILD_TESTING=ON
+cmake --build .
+```
+
+---
+
+## Testing Guidelines
+
+1. **Write Unit Tests**: All new features should include corresponding unit tests using Catch2
+2. **Test Template Instantiations**: Ensure your tests cover various template instantiations
+3. **Performance Testing**: Include benchmarks for performance-critical code paths
+4. **String Ownership**: Add specific tests verifying correct string ownership management
+5. **Test All Placeholder Styles**: Ensure all placeholder types work correctly
+
+Run tests with:
+```bash
+cd build
+ctest -V
+```
 
 ---
 
 ## Submitting Contributions
 
-1. **Open an Issue**  
-   Before starting major changes, create an issue to discuss your plans. Ensure your contribution aligns with the project's roadmap.
+1. **Open an Issue First**  
+   Discuss significant changes before implementation to ensure alignment with project goals.
 
 2. **Make Atomic Commits**  
-   Write meaningful commit messages and keep changes focused. Each commit should ideally represent a single task or improvement.
+   Each commit should represent a single logical change with a clear message.
 
-3. **Follow the Pull Request Template**  
-   When submitting a pull request:
-   - Reference the issue number (if applicable).
-   - Explain the changes you made and why they are necessary.
-   - Include any relevant screenshots or logs.
+3. **Pull Request Process**
+   - Reference any related issues
+   - Include a detailed description of changes
+   - Ensure all tests pass
+   - Verify code follows all conventions
+
+4. **Code Review**  
+   Be responsive to feedback and be prepared to make requested changes.
 
 ---
 
 ## Code of Conduct
 
-By contributing to this project, you agree to uphold the values of inclusivity, respect, and collaboration. Please treat others with kindness and patience.
-
-For more details, please refer to the [Code of Conduct](CODE_OF_CONDUCT.md).
+We expect all contributors to be respectful and collaborative. Harassment or disrespectful behavior will not be tolerated. We aim to foster an inclusive community where everyone feels welcome to contribute.
 
 ---
 
-We appreciate your contributions and look forward to collaborating with you to improve [Your Project Name]! If you have any questions, feel free to open a discussion or contact the maintainers. Happy coding! 😊
+Thank you for contributing to SQLQueryBuilder! If you have questions, please open a discussion or contact the maintainers directly.
