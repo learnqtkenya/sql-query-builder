@@ -1,5 +1,8 @@
 # SQL Query Builder
 
+[![CI](https://github.com/learnqtkenya/sqlquerybuilder/actions/workflows/ci.yml/badge.svg)](https://github.com/learnqtkenya/sqlquerybuilder/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/learnqtkenya/sqlquerybuilder)](https://github.com/learnqtkenya/sqlquerybuilder/releases)
+
 A lightweight, header-only C++20 SQL query builder with type safety, stack allocation, and minimal overhead.
 
 ## Features
