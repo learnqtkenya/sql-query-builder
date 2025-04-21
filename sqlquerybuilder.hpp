@@ -157,6 +157,7 @@ struct is_sql_compatible<T> : std::true_type {};
 template<>
 struct is_sql_compatible<bool> : std::true_type {};
 
+
 // Qt support
 #ifdef SQLQUERYBUILDER_USE_QT
 template<>
@@ -184,6 +185,9 @@ class Column;
 
 template<typename Config = DefaultConfig>
 class AliasedTable;
+
+template<typename Config = DefaultConfig>
+class Placeholder;
 
 // Table class with config awareness
 template<typename Config = DefaultConfig>
@@ -315,6 +319,36 @@ public:
 
     template<typename U>
     [[nodiscard]] Condition<Config> notIn(std::span<const U> values) const;
+
+    [[nodiscard]] Condition<Config> eq(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Eq, value);
+    }
+
+    [[nodiscard]] Condition<Config> ne(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ne, value);
+    }
+
+    [[nodiscard]] Condition<Config> lt(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Lt, value);
+    }
+
+    [[nodiscard]] Condition<Config> le(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Le, value);
+    }
+
+    [[nodiscard]] Condition<Config> gt(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Gt, value);
+    }
+
+    [[nodiscard]] Condition<Config> ge(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ge, value);
+    }
 };
 
 // SqlValue class with type-safe storage
@@ -326,7 +360,8 @@ public:
         int64_t,
         double,
         bool,
-        std::string_view
+        std::string_view,
+        Placeholder<Config>
 #ifdef SQLQUERYBUILDER_USE_QT
         ,QString
         ,QDateTime
@@ -359,8 +394,12 @@ public:
 #endif
         } else if constexpr(std::is_enum_v<std::remove_cvref_t<T>>) {
             storage_ = static_cast<int64_t>(value);
+        } else if constexpr(std::is_same_v<std::remove_cvref_t<T>, std::string>) {
+            storage_ = std::string_view(value.data(), value.size());
         }
     }
+    explicit SqlValue(Placeholder<Config> placeholder) : storage_(placeholder) {}
+
 
     static std::string escapeString(std::string_view str) {
         // Pre-allocate with a bit of extra space for quotes and potential escapes
@@ -393,6 +432,8 @@ public:
                 return value ? std::string(keywords::TRUE_VALUE) : std::string(keywords::FALSE_VALUE);
             } else if constexpr(std::is_same_v<T, std::string_view>) {
                 return escapeString(value);
+            } else if constexpr(std::is_same_v<T, Placeholder<Config>>) {
+                return value.toString();
 #ifdef SQLQUERYBUILDER_USE_QT
             } else if constexpr(std::is_same_v<T, QString>) {
                 return escapeString(value.toStdString());
@@ -400,12 +441,20 @@ public:
                 return std::format("'{}'", value.toString(Qt::ISODate).toStdString());
 #endif
             }
-            return std::string(keywords::NULL_VALUE); // Fallback for any unexpected type
+            return std::string(keywords::NULL_VALUE); // Fallback
         }, storage_);
     }
 
     [[nodiscard]] bool isNull() const { return std::holds_alternative<std::monostate>(storage_); }
+    [[nodiscard]] bool isPlaceholder() const {
+        return std::holds_alternative<Placeholder<Config>>(storage_);
+    }
 };
+
+template<typename Config = DefaultConfig>
+inline SqlValue<Config> ph(std::string_view name = "") {
+    return SqlValue<Config>(Placeholder<Config>(name));
+}
 
 template<typename Config>
 class Condition;
@@ -486,7 +535,7 @@ private:
     };
 
     struct RawData {
-        std::string_view raw_sql;
+        std::string raw_sql;
     };
 
     struct InConditionData {
@@ -520,7 +569,7 @@ public:
     // Constructor for raw SQL conditions
     explicit Condition(std::string_view raw_condition)
         : type_(Type::Raw) {
-        data_ = RawData{raw_condition};
+        data_ = RawData{std::string(raw_condition)};
     }
 
     // Constructor for column OP value conditions
@@ -632,14 +681,13 @@ public:
         result.negated_ = !negated_;
         return result;
     }
-
     // Compound AND operator
     Condition operator&&(const Condition& other) const {
         Condition result;
         result.type_ = Type::Compound;
         result.op_ = Op::And;
 
-        // Create compound condition using serialized strings
+        // Convert conditions to strings first
         CompoundConditionData compound;
         compound.left_condition = this->toString();
         compound.right_condition = other.toString();
@@ -903,9 +951,38 @@ public:
     [[nodiscard]] Condition<Config> notIn(std::span<const U> values) const {
         return Condition<Config>::notIn(name_, values);
     }
+
+    [[nodiscard]] Condition<Config> eq(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Eq, value);
+    }
+
+    [[nodiscard]] Condition<Config> ne(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ne, value);
+    }
+
+    [[nodiscard]] Condition<Config> lt(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Lt, value);
+    }
+
+    [[nodiscard]] Condition<Config> le(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Le, value);
+    }
+
+    [[nodiscard]] Condition<Config> gt(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Gt, value);
+    }
+
+    [[nodiscard]] Condition<Config> ge(const SqlValue<Config>& value) const {
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ge, value);
+    }
 };
 
-// TypedColumn implementation
 template<typename T, typename Config>
 Condition<Config> TypedColumn<T, Config>::isNull() const {
     return Condition<Config>::isNull(name_);
@@ -1162,6 +1239,36 @@ template<typename Config, SqlCompatible T>
 inline Condition<Config> operator>=(const Column<Config>& col, T&& val) {
     return col.ge(std::forward<T>(val));
 }
+// new
+template<typename T, typename Config>
+inline Condition<Config> operator==(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.eq(val);
+}
+
+template<typename T, typename Config>
+inline Condition<Config> operator!=(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.ne(val);
+}
+
+template<typename T, typename Config>
+inline Condition<Config> operator<(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.lt(val);
+}
+
+template<typename T, typename Config>
+inline Condition<Config> operator<=(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.le(val);
+}
+
+template<typename T, typename Config>
+inline Condition<Config> operator>(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.gt(val);
+}
+
+template<typename T, typename Config>
+inline Condition<Config> operator>=(const TypedColumn<T, Config>& col, const SqlValue<Config>& val) {
+    return col.ge(val);
+}
 
 // Qt type operator overloads
 #ifdef SQLQUERYBUILDER_USE_QT
@@ -1319,6 +1426,52 @@ public:
         toString(result);
         return result;
     }
+};
+
+// Placeholder class to represent a SQL parameter placeholder
+template <typename Config>
+class Placeholder {
+private:
+    std::string name_;
+    enum class Style {
+        QuestionMark,  // ?
+        Dollar,        // $1, $2, etc.
+        Colon,         // :name
+        At             // @name
+    };
+    Style style_;
+
+public:
+    explicit Placeholder(std::string_view name = "")
+        : name_(name) {
+        if (name.empty()) {
+            style_ = Style::QuestionMark;
+        } else if (name[0] == ':') {
+            style_ = Style::Colon;
+        } else if (name[0] == '@') {
+            style_ = Style::At;
+        } else if (name[0] == '$') {
+            style_ = Style::Dollar;
+        } else {
+            style_ = Style::Colon;
+            name_ = ":" + std::string(name);
+        }
+    }
+
+    [[nodiscard]] std::string toString() const {
+        switch (style_) {
+        case Style::QuestionMark:
+            return "?";
+        case Style::Dollar:
+        case Style::Colon:
+        case Style::At:
+            return name_;
+        default:
+            return "?";
+        }
+    }
+
+    [[nodiscard]] constexpr bool isPlaceholder() const { return true; }
 };
 
 // A class that holds a fluent where builder for complex conditions
@@ -2064,7 +2217,7 @@ public:
             return *this;
         }
 
-        std::string condition = std::string("EXISTS (") + std::string(subquery) + ")";
+        std::string condition = "EXISTS (" + std::string(subquery) + ")";
         filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(condition);
         return *this;
     }

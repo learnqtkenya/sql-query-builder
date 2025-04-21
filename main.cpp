@@ -665,5 +665,26 @@ int main() {
         std::cout << query << "\n";
     }
 
+    // Using placeholders
+    {
+        printSection("Queries with placeholders");
+        auto query = QueryBuilder()
+                         .select("id"sv, "name"sv, "email"sv)
+                         .from("users"sv)
+                         .where(users.name == ph(":ph"))
+                         .build();
+
+        std::cout << query << std::endl;
+
+        auto query2 = QueryBuilder()
+                          .select("id"sv, "name"sv, "email"sv)
+                          .from("users"sv)
+                          .where(col("id") == ph("?"))
+                          .where(users.email == ph("@status"))
+                          .build();
+
+        std::cout << query2 << std::endl;
+    }
+
     return 0;
 }
