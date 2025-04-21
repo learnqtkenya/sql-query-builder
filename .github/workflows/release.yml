@@ -73,4 +73,4 @@ jobs:
             sqlquerybuilder-${{ github.ref_name }}.tar.gz
           draft: false
           prerelease: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
