@@ -33,15 +33,11 @@ jobs:
           configurePreset: 'default'
           configurePresetAdditionalArgs: "['-DCMAKE_BUILD_TYPE=Release']"
           buildPreset: 'default'
-          buildPresetAdditionalArgs: "['--config Release']"
           testPreset: 'default'
-          testPresetAdditionalArgs: "['--config Release']"
-        env:
-          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
 
       - name: Generate changelog
         id: changelog
-        uses: metcalfc/changelog-generator@v4.1.0
+        uses: metcalfc/changelog-generator@v4.6.2
         with:
           myToken: ${{ secrets.GITHUB_TOKEN }}
 
@@ -77,3 +73,4 @@ jobs:
             sqlquerybuilder-${{ github.ref_name }}.tar.gz
           draft: false
           prerelease: false
+          token: ${{ secrets.RELEASE_TOKEN }}
