@@ -23,12 +23,12 @@ jobs:
       - uses: lukka/get-cmake@latest
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@v10
         with:
           runVcpkgInstall: true
 
       - name: Configure, Build and Test
-        uses: lukka/run-cmake@v11
+        uses: lukka/run-cmake@v10
         with:
           configurePreset: 'default'
           configurePresetAdditionalArgs: "['-DCMAKE_BUILD_TYPE=Release']"
