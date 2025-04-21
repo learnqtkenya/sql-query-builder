@@ -8,12 +8,15 @@ A lightweight, header-only C++20 SQL query builder with type safety, stack alloc
 - Stack-allocated with configurable sizes for optimal performance
 - Dual API: traditional string-based and modern type-safe column interfaces
 - Compile-time type safety via concepts and templates
-- Zero heap allocations with proper size configuration
+- Near-zero heap allocations with proper size configuration
 - Automatic SQL injection protection with proper escaping
-- Comprehensive error handling
+- Comprehensive error handling with compile-time validations
 - Support for enums and custom types
 - Config-aware typed tables and columns (sqlpp11-like interface)
 - Cross-configuration interoperability
+- Table and column aliasing for complex queries
+- Fluent condition builder for complex nested conditions
+- Static SQL keywords for improved performance
 
 ```
 Run on (8 X 3800 MHz CPU s)
@@ -117,11 +120,49 @@ int main() {
 }
 ```
 
+## Table and Column Aliasing
+
+```cpp
+// Create aliased tables for complex joins
+auto u = users.as("u");
+auto o = orders.as("o");
+
+// Use aliased tables in queries
+auto query = QueryBuilder()
+    .select(u.id, u.name, o.id.as("order_id"), o.amount)
+    .from(u)
+    .innerJoin(o, u.id == o.user_id)  // Direct condition
+    .where(u.active == true)
+    .build();
+    
+// Output: SELECT u.id, u.name, o.id AS order_id, o.amount FROM users u INNER JOIN orders o ON u.id = o.user_id WHERE u.active = 1
+```
+
+## Fluent Condition Builder
+
+```cpp
+// Complex nested conditions with fluent builder
+auto query = QueryBuilder()
+    .select(users.id, users.name)
+    .from(users.table)
+    .where([](auto& w) {
+        w.condition(users.active == true)
+         .and_(users.email.isNotNull())
+         .or_([](auto& orw) {
+             orw.condition(users.role == "admin")
+                .and_(users.created_at >= "2023-01-01");
+         });
+    })
+    .build();
+    
+// Output: SELECT users.id, users.name FROM users WHERE (users.active = 1 AND users.email IS NOT NULL) OR ((users.role = 'admin' AND users.created_at >= '2023-01-01'))
+```
+
 ## Stack Allocation Benefits
 
-The query builder uses stack allocation for all internal data structures, resulting in:
+The query builder uses stack allocation for most internal data structures, resulting in:
 
-- **Zero heap allocations** during normal operation
+- **Near-zero heap allocations** during normal operation
 - **Better cache locality** for improved performance
 - **No memory fragmentation** from frequent allocations/deallocations
 - **Predictable memory usage** based on configuration
@@ -182,11 +223,11 @@ SQL_END_TABLE()
 const users_table users;
 const orders_table orders;
 
-// Join with type-safe column comparison
+// Join with type-safe column comparison and improved join syntax
 auto query = QueryBuilder()
     .select(users.id, users.name, orders.amount)
     .from(users.table)
-    .innerJoin(orders.table, (users.id == orders.user_id).toString())
+    .innerJoin(orders.table, users.id == orders.user_id)  // Direct condition object
     .where(users.status == UserStatus::Active)
     .build();
 ```
@@ -216,6 +257,26 @@ auto query = QueryBuilder<MyConfig>()
 auto typedQuery = QueryBuilder<MyConfig>()
     .select(users.id, users.name)
     .from(users.table)
+    .build();
+```
+
+## Compile-Time Validations
+
+The library provides compile-time checks to prevent misuse:
+
+```cpp
+// This will cause a compile error - ORDER BY only valid for SELECT
+auto query = QueryBuilder()
+    .insert(users.table)
+    .value(users.name, "John")
+    .orderBy(users.name)  // Compile error: "ORDER BY can only be used with SELECT queries"
+    .build();
+    
+// This will cause a compile error - GROUP BY only valid for SELECT
+auto query = QueryBuilder()
+    .update(users.table)
+    .set(users.name, "John")
+    .groupBy(users.id)  // Compile error: "GROUP BY can only be used with SELECT queries"
     .build();
 ```
 
@@ -250,7 +311,7 @@ auto query = QueryBuilder<MyConfig>()
 auto query = QueryBuilder()
     .select(users.id, users.name, "COUNT(orders.id) as order_count"sv)
     .from(users.table)
-    .leftJoin(orders.table, (users.id == orders.user_id).toString())
+    .leftJoin(orders.table, users.id == orders.user_id)  // Direct condition
     .where(users.status == UserStatus::Active)
     .groupBy(users.id)
     .groupBy(users.name)
@@ -343,6 +404,10 @@ auto query2 = QueryBuilder()
 
 ## Advanced Features
 
+- Direct condition expressions: `users.id == orders.user_id` works directly in JOIN methods
+- Table and column aliasing: `users.as("u")` and `column.as("alias")`
+- Fluent condition builder: `.where([](auto& w) { w.condition(cond1).and_(cond2).or_(cond3); })`
+- Compile-time validation: Prevents invalid operations (e.g., ORDER BY in INSERT)
 - Complex nested conditions: `(users.active == true && (users.role == "admin" || users.permissions > 10))`
 - Raw SQL conditions: `.whereRaw("DATE(created_at) > DATE_SUB(NOW(), INTERVAL 1 MONTH)"sv)`
 - EXISTS subqueries: `.whereExists(subQueryString)`

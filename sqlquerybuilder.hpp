@@ -3,15 +3,13 @@
 #include <array>
 #include <span>
 #include <string_view>
-#include <concepts>
 #include <variant>
 #include <format>
-#include <sstream>
 #include <type_traits>
 #include <cassert>
 #include <optional>
 #include <cstdint>
-#include <memory>
+#include <functional>
 
 // Optional Qt support
 #ifdef SQLQUERYBUILDER_USE_QT
@@ -21,6 +19,59 @@
 
 namespace sql {
 inline namespace v1 {
+
+//=====================
+// Static SQL Keywords
+//=====================
+namespace keywords {
+inline constexpr std::string_view SELECT = "SELECT";
+inline constexpr std::string_view FROM = "FROM";
+inline constexpr std::string_view WHERE = "WHERE";
+inline constexpr std::string_view AND = "AND";
+inline constexpr std::string_view OR = "OR";
+inline constexpr std::string_view JOIN = "JOIN";
+inline constexpr std::string_view INNER_JOIN = "INNER JOIN";
+inline constexpr std::string_view LEFT_JOIN = "LEFT JOIN";
+inline constexpr std::string_view RIGHT_JOIN = "RIGHT JOIN";
+inline constexpr std::string_view FULL_JOIN = "FULL JOIN";
+inline constexpr std::string_view CROSS_JOIN = "CROSS JOIN";
+inline constexpr std::string_view ON = "ON";
+inline constexpr std::string_view ORDER_BY = "ORDER BY";
+inline constexpr std::string_view GROUP_BY = "GROUP BY";
+inline constexpr std::string_view HAVING = "HAVING";
+inline constexpr std::string_view LIMIT = "LIMIT";
+inline constexpr std::string_view OFFSET = "OFFSET";
+inline constexpr std::string_view INSERT = "INSERT";
+inline constexpr std::string_view INSERT_OR_REPLACE = "INSERT OR REPLACE";
+inline constexpr std::string_view INTO = "INTO";
+inline constexpr std::string_view VALUES = "VALUES";
+inline constexpr std::string_view UPDATE = "UPDATE";
+inline constexpr std::string_view SET = "SET";
+inline constexpr std::string_view DELETE = "DELETE";
+inline constexpr std::string_view TRUNCATE = "TRUNCATE TABLE";
+inline constexpr std::string_view COUNT = "COUNT";
+inline constexpr std::string_view SUM = "SUM";
+inline constexpr std::string_view AVG = "AVG";
+inline constexpr std::string_view MIN = "MIN";
+inline constexpr std::string_view MAX = "MAX";
+inline constexpr std::string_view BETWEEN = "BETWEEN";
+inline constexpr std::string_view IN = "IN";
+inline constexpr std::string_view NOT_IN = "NOT IN";
+inline constexpr std::string_view LIKE = "LIKE";
+inline constexpr std::string_view NOT_LIKE = "NOT LIKE";
+inline constexpr std::string_view IS_NULL = "IS NULL";
+inline constexpr std::string_view IS_NOT_NULL = "IS NOT NULL";
+inline constexpr std::string_view AS = "AS";
+inline constexpr std::string_view ASC = "ASC";
+inline constexpr std::string_view DESC = "DESC";
+inline constexpr std::string_view DISTINCT = "DISTINCT";
+inline constexpr std::string_view EXISTS = "EXISTS";
+inline constexpr std::string_view NULL_VALUE = "NULL";
+inline constexpr std::string_view TRUE_VALUE = "1";
+inline constexpr std::string_view FALSE_VALUE = "0";
+inline constexpr std::string_view ALL = "*";
+inline constexpr std::string_view GROUP_CONCAT = "GROUP_CONCAT";
+}
 
 // Configuration
 struct DefaultConfig {
@@ -44,7 +95,8 @@ struct QueryError {
         InvalidColumn,
         InvalidCondition,
         TooManyOrderBy,
-        TooManyGroupBy
+        TooManyGroupBy,
+        InvalidOperation
     };
 
     Code code{Code::None};
@@ -80,51 +132,58 @@ struct is_string_literal<const char[N]> : std::true_type {};
 template<std::size_t N>
 struct is_string_literal<char[N]> : std::true_type {};
 
+// Type traits to check if a value is compatible with SQL
+template<typename T>
+struct is_sql_compatible : std::false_type {};
+
+template<typename T> requires std::is_integral_v<std::remove_cvref_t<T>>
+struct is_sql_compatible<T> : std::true_type {};
+
+template<typename T> requires std::is_floating_point_v<std::remove_cvref_t<T>>
+struct is_sql_compatible<T> : std::true_type {};
+
+template<typename T> requires std::is_enum_v<std::remove_cvref_t<T>>
+struct is_sql_compatible<T> : std::true_type {};
+
+template<>
+struct is_sql_compatible<std::string_view> : std::true_type {};
+
+template<>
+struct is_sql_compatible<std::string> : std::true_type {};
+
+template<typename T> requires is_string_literal<std::remove_cvref_t<T>>::value
+struct is_sql_compatible<T> : std::true_type {};
+
+template<>
+struct is_sql_compatible<bool> : std::true_type {};
+
 // Qt support
 #ifdef SQLQUERYBUILDER_USE_QT
-template<typename T>
-struct is_qt_type : std::false_type {};
+template<>
+struct is_sql_compatible<QString> : std::true_type {};
 
 template<>
-struct is_qt_type<QString> : std::true_type {};
-
-template<>
-struct is_qt_type<QDateTime> : std::true_type {};
-
-template<>
-struct is_qt_type<QString&> : std::true_type {};
-
-template<>
-struct is_qt_type<const QString&> : std::true_type {};
-
-template<>
-struct is_qt_type<QDateTime&> : std::true_type {};
-
-template<>
-struct is_qt_type<const QDateTime&> : std::true_type {};
+struct is_sql_compatible<QDateTime> : std::true_type {};
 #endif
 
 template<typename T>
-concept SqlCompatible =
-    std::is_integral_v<std::remove_cvref_t<T>> ||
-    std::is_floating_point_v<std::remove_cvref_t<T>> ||
-    std::is_enum_v<std::remove_cvref_t<T>> ||
-    std::same_as<std::remove_cvref_t<T>, std::string_view> ||
-    std::same_as<std::remove_cvref_t<T>, std::string> ||
-    is_string_literal<std::remove_cvref_t<T>>::value ||
-#ifdef SQLQUERYBUILDER_USE_QT
-    is_qt_type<std::remove_cvref_t<T>>::value ||
-#endif
-    std::same_as<std::remove_cvref_t<T>, bool>;
+concept SqlCompatible = is_sql_compatible<std::remove_cvref_t<T>>::value;
 
+// Forward declarations
 template<typename Config = DefaultConfig>
 class SqlValue;
+
+template<typename Config = DefaultConfig>
+class ConditionBase;
 
 template<typename Config = DefaultConfig>
 class Condition;
 
 template<typename Config = DefaultConfig>
 class Column;
+
+template<typename Config = DefaultConfig>
+class AliasedTable;
 
 // Table class with config awareness
 template<typename Config = DefaultConfig>
@@ -138,7 +197,36 @@ public:
     [[nodiscard]] constexpr std::string_view name() const { return name_; }
 
     operator std::string_view() const { return name_; }
+
+    [[nodiscard]] AliasedTable<Config> as(std::string_view alias) const;
 };
+
+// AliasedTable for better join handling
+template<typename Config>
+class AliasedTable {
+private:
+    std::string_view table_;
+    std::string_view alias_;
+
+public:
+    constexpr AliasedTable(std::string_view table, std::string_view alias)
+        : table_(table), alias_(alias) {}
+
+    [[nodiscard]] constexpr std::string_view tableName() const { return table_; }
+    [[nodiscard]] constexpr std::string_view alias() const { return alias_; }
+
+    [[nodiscard]] std::string toString() const {
+        return std::string(table_) + " " + std::string(alias_);
+    }
+
+    operator std::string() const { return toString(); }
+};
+
+// Implementation of Table::as
+template<typename Config>
+AliasedTable<Config> Table<Config>::as(std::string_view alias) const {
+    return AliasedTable<Config>(name_, alias);
+}
 
 // TypedColumn class with config awareness
 template<typename T, typename Config = DefaultConfig>
@@ -146,23 +234,37 @@ class TypedColumn {
 private:
     std::string_view table_;
     std::string_view name_;
+    std::string_view alias_; // Optional column alias
 
 public:
     using value_type = T;
     using config_type = Config;
 
     constexpr TypedColumn(std::string_view table, std::string_view name)
-        : table_(table), name_(name) {}
+        : table_(table), name_(name), alias_() {}
+
+    // Constructor that includes column alias
+    constexpr TypedColumn(std::string_view table, std::string_view name, std::string_view alias)
+        : table_(table), name_(name), alias_(alias) {}
 
     [[nodiscard]] constexpr std::string_view tableName() const { return table_; }
     [[nodiscard]] constexpr std::string_view name() const { return name_; }
+    [[nodiscard]] constexpr std::string_view alias() const { return alias_; }
 
     [[nodiscard]] std::string qualifiedName() const {
+        if (table_.empty()) {
+            return std::string(name_);
+        }
         return std::string(table_) + "." + std::string(name_);
+    }
+
+    [[nodiscard]] TypedColumn<T, Config> as(std::string_view alias) const {
+        return TypedColumn<T, Config>(table_, name_, alias);
     }
 
     operator std::string_view() const { return name_; }
 
+    // Condition generators
     [[nodiscard]] Condition<Config> isNull() const;
     [[nodiscard]] Condition<Config> isNotNull() const;
 
@@ -260,73 +362,57 @@ public:
         }
     }
 
+    static std::string escapeString(std::string_view str) {
+        // Pre-allocate with a bit of extra space for quotes and potential escapes
+        std::string escaped;
+        escaped.reserve(str.size() + 10);
+        escaped.push_back('\'');
+
+        for (char c : str) {
+            if (c == '\'') {
+                escaped.append("''");
+            } else {
+                escaped.push_back(c);
+            }
+        }
+
+        escaped.push_back('\'');
+        return escaped;
+    }
+
     [[nodiscard]] std::string toSqlString() const {
         return std::visit([](const auto& value) -> std::string {
             using T = std::decay_t<decltype(value)>;
             if constexpr(std::is_same_v<T, std::monostate>) {
-                return "NULL";
+                return std::string(keywords::NULL_VALUE);
             } else if constexpr(std::is_integral_v<T>) {
                 return std::to_string(value);
             } else if constexpr(std::is_floating_point_v<T>) {
                 return std::to_string(value);
             } else if constexpr(std::is_same_v<T, bool>) {
-                return value ? "1" : "0";
+                return value ? std::string(keywords::TRUE_VALUE) : std::string(keywords::FALSE_VALUE);
             } else if constexpr(std::is_same_v<T, std::string_view>) {
-                std::string escaped;
-                escaped.reserve(value.size() + 2);
-                escaped.push_back('\'');
-
-                for (char c : value) {
-                    if (c == '\'') {
-                        escaped.append("''");
-                    } else {
-                        escaped.push_back(c);
-                    }
-                }
-
-                escaped.push_back('\'');
-                return escaped;
+                return escapeString(value);
 #ifdef SQLQUERYBUILDER_USE_QT
             } else if constexpr(std::is_same_v<T, QString>) {
-                std::string str = value.toStdString();
-                std::string escaped;
-                escaped.reserve(str.size() + 2);
-                escaped.push_back('\'');
-
-                for (char c : str) {
-                    if (c == '\'') {
-                        escaped.append("''");
-                    } else {
-                        escaped.push_back(c);
-                    }
-                }
-
-                escaped.push_back('\'');
-                return escaped;
+                return escapeString(value.toStdString());
             } else if constexpr(std::is_same_v<T, QDateTime>) {
                 return std::format("'{}'", value.toString(Qt::ISODate).toStdString());
 #endif
             }
-            return "NULL"; // Fallback for any unexpected type
+            return std::string(keywords::NULL_VALUE); // Fallback for any unexpected type
         }, storage_);
     }
 
     [[nodiscard]] bool isNull() const { return std::holds_alternative<std::monostate>(storage_); }
 };
 
-// Forward declaration
 template<typename Config>
 class Condition;
 
+// Base class for common condition operations
 template<typename Config>
-struct CompoundCondition {
-    Condition<Config> left;
-    Condition<Config> right;
-    typename Condition<Config>::Op op;
-};
-
-template<typename Config>
-class Condition {
+class ConditionBase {
 public:
     enum class Op : uint8_t {
         Eq, Ne, Lt, Le, Gt, Ge,
@@ -351,36 +437,6 @@ public:
         In               // column IN (values)
     };
 
-private:
-    Type type_ = Type::Invalid;
-    Op op_ = Op::Eq;
-    bool negated_ = false;
-
-    // For column operations
-    std::string_view column_;
-    std::string_view table_;
-
-    // For values
-    std::array<SqlValue<Config>, 2> values_{};
-    size_t value_count_ = 0;
-
-    // For column-to-column comparisons
-    std::string_view right_column_;
-    std::string_view right_table_;
-
-    // For raw SQL
-    std::string_view raw_sql_;
-
-    // For compound conditions
-    // Use a single unique_ptr for compound conditions only
-    // This is the only place where we'll accept heap allocation
-    std::unique_ptr<CompoundCondition<Config>> compound_;
-
-    // For IN conditions
-    std::array<SqlValue<Config>, Config::MaxInValues> in_values_{};
-    size_t in_values_count_ = 0;
-
-    // Helper method to convert op to string
     static const char* opToString(Op op) {
         switch (op) {
         case Op::Eq: return "=";
@@ -396,6 +452,66 @@ private:
         default: return "";
         }
     }
+};
+
+// Primary Condition class
+template<typename Config>
+class Condition : public ConditionBase<Config> {
+public:
+    using typename ConditionBase<Config>::Op;
+    using typename ConditionBase<Config>::Type;
+
+private:
+    Type type_ = Type::Invalid;
+    Op op_ = Op::Eq;
+    bool negated_ = false;
+
+    // For column operations
+    std::string_view column_;
+    std::string_view table_;
+
+    // Storage for various condition types
+    struct SimpleConditionData {
+        SqlValue<Config> value;
+    };
+
+    struct BetweenConditionData {
+        SqlValue<Config> start;
+        SqlValue<Config> end;
+    };
+
+    struct ColumnColumnData {
+        std::string_view right_column;
+        std::string_view right_table;
+    };
+
+    struct RawData {
+        std::string_view raw_sql;
+    };
+
+    struct InConditionData {
+        std::array<SqlValue<Config>, Config::MaxInValues> values;
+        size_t count = 0;
+    };
+
+    // CompoundCondition for recursive conditions (AND/OR)
+    struct CompoundConditionData {
+        std::string left_condition;
+        std::string right_condition;
+        Op op;
+    };
+
+    using ConditionVariant = std::variant<
+        std::monostate,            // Invalid or simple conditions
+        SimpleConditionData,       // For SimpleValue
+        BetweenConditionData,      // For Between
+        ColumnColumnData,          // For ColumnColumn
+        RawData,                   // For Raw
+        InConditionData,           // For In
+        CompoundConditionData      // For Compound
+        >;
+
+    ConditionVariant data_;
 
 public:
     // Default constructor - creates an invalid condition
@@ -403,12 +519,14 @@ public:
 
     // Constructor for raw SQL conditions
     explicit Condition(std::string_view raw_condition)
-        : type_(Type::Raw), raw_sql_(raw_condition) {}
+        : type_(Type::Raw) {
+        data_ = RawData{raw_condition};
+    }
 
     // Constructor for column OP value conditions
     Condition(std::string_view column, Op op, SqlValue<Config> value)
-        : type_(Type::SimpleValue), op_(op), column_(column), value_count_(1) {
-        values_[0] = value;
+        : type_(Type::SimpleValue), op_(op), column_(column) {
+        data_ = SimpleConditionData{value};
     }
 
     // Column-to-column comparison constructor with explicit tables
@@ -416,19 +534,21 @@ public:
               Op op,
               std::string_view right_table, std::string_view right_column)
         : type_(Type::ColumnColumn), op_(op),
-        table_(left_table), column_(left_column),
-        right_table_(right_table), right_column_(right_column) {}
+        table_(left_table), column_(left_column) {
+        data_ = ColumnColumnData{right_column, right_table};
+    }
 
     // Shorthand for column-to-column without explicit tables
     Condition(std::string_view left_column, Op op, std::string_view right_column)
         : type_(Type::ColumnColumn), op_(op),
-        column_(left_column), right_column_(right_column) {}
+        column_(left_column) {
+        data_ = ColumnColumnData{right_column, ""};
+    }
 
     // Between constructor
     Condition(std::string_view column, Op op, SqlValue<Config> value1, SqlValue<Config> value2)
-        : type_(Type::Between), op_(op), column_(column), value_count_(2) {
-        values_[0] = value1;
-        values_[1] = value2;
+        : type_(Type::Between), op_(op), column_(column) {
+        data_ = BetweenConditionData{value1, value2};
     }
 
     // IS NULL constructor
@@ -455,14 +575,16 @@ public:
         cond.op_ = Op::In;
         cond.column_ = column;
 
+        InConditionData inData;
         // Check bounds
         const size_t count = std::min(values.size(), static_cast<size_t>(Config::MaxInValues));
 
         // Convert each value to SqlValue
         for (size_t i = 0; i < count; ++i) {
-            cond.in_values_[i] = SqlValue<Config>(values[i]);
+            inData.values[i] = SqlValue<Config>(values[i]);
         }
-        cond.in_values_count_ = count;
+        inData.count = count;
+        cond.data_ = std::move(inData);
 
         return cond;
     }
@@ -475,25 +597,13 @@ public:
         return cond;
     }
 
-    // Copy constructor (including compound conditions)
     Condition(const Condition& other)
         : type_(other.type_), op_(other.op_), negated_(other.negated_),
-        column_(other.column_), table_(other.table_),
-        values_(other.values_), value_count_(other.value_count_),
-        right_column_(other.right_column_), right_table_(other.right_table_),
-        raw_sql_(other.raw_sql_),
-        in_values_(other.in_values_), in_values_count_(other.in_values_count_) {
-
-        // Deep copy compound condition if present
-        if (other.compound_) {
-            compound_ = std::make_unique<CompoundCondition<Config>>(*other.compound_);
-        }
+        column_(other.column_), table_(other.table_), data_(other.data_) {
     }
 
-    // Move constructor
     Condition(Condition&& other) noexcept = default;
 
-    // Assignment operator
     Condition& operator=(const Condition& other) {
         if (this != &other) {
             type_ = other.type_;
@@ -501,25 +611,11 @@ public:
             negated_ = other.negated_;
             column_ = other.column_;
             table_ = other.table_;
-            values_ = other.values_;
-            value_count_ = other.value_count_;
-            right_column_ = other.right_column_;
-            right_table_ = other.right_table_;
-            raw_sql_ = other.raw_sql_;
-            in_values_ = other.in_values_;
-            in_values_count_ = other.in_values_count_;
-
-            // Deep copy compound condition if present
-            if (other.compound_) {
-                compound_ = std::make_unique<CompoundCondition<Config>>(*other.compound_);
-            } else {
-                compound_.reset();
-            }
+            data_ = other.data_;
         }
         return *this;
     }
 
-    // Move assignment operator
     Condition& operator=(Condition&& other) noexcept = default;
 
     // Cross-config copy constructor
@@ -527,7 +623,7 @@ public:
     Condition(const Condition<OtherConfig>& other) {
         // For cross-config conversion, we'll use the string representation
         type_ = Type::Raw;
-        raw_sql_ = other.toString();
+        data_ = RawData{other.toString()};
     }
 
     // Negation operator
@@ -543,11 +639,12 @@ public:
         result.type_ = Type::Compound;
         result.op_ = Op::And;
 
-        // Create compound condition
-        result.compound_ = std::make_unique<CompoundCondition<Config>>();
-        result.compound_->left = *this;
-        result.compound_->right = other;
-        result.compound_->op = Op::And;
+        // Create compound condition using serialized strings
+        CompoundConditionData compound;
+        compound.left_condition = this->toString();
+        compound.right_condition = other.toString();
+        compound.op = Op::And;
+        result.data_ = std::move(compound);
 
         return result;
     }
@@ -558,103 +655,172 @@ public:
         result.type_ = Type::Compound;
         result.op_ = Op::Or;
 
-        // Create compound condition
-        result.compound_ = std::make_unique<CompoundCondition<Config>>();
-        result.compound_->left = *this;
-        result.compound_->right = other;
-        result.compound_->op = Op::Or;
+        // Create compound condition using serialized strings
+        CompoundConditionData compound;
+        compound.left_condition = this->toString();
+        compound.right_condition = other.toString();
+        compound.op = Op::Or;
+        result.data_ = std::move(compound);
 
         return result;
     }
 
     // Convert to string for SQL generation
-    void toString(std::ostringstream& oss) const {
+    void toString(std::string& query) const {
         if (type_ == Type::Invalid) {
-            oss << "INVALID CONDITION";
+            query += "INVALID CONDITION";
             return;
         }
 
         if (negated_) {
-            oss << "NOT (";
+            query += "NOT (";
         }
 
         switch (type_) {
         case Type::Raw:
-            oss << raw_sql_;
+            query += std::get<RawData>(data_).raw_sql;
             break;
 
         case Type::IsNull:
-            oss << column_ << " IS NULL";
+            query += column_;
+            query += " IS NULL";
             break;
 
         case Type::IsNotNull:
-            oss << column_ << " IS NOT NULL";
+            query += column_;
+            query += " IS NOT NULL";
             break;
 
-        case Type::Between:
-            oss << column_ << " BETWEEN " << values_[0].toSqlString()
-                << " AND " << values_[1].toSqlString();
+        case Type::Between: {
+            const auto& betweenData = std::get<BetweenConditionData>(data_);
+            query += column_;
+            query += " BETWEEN ";
+            query += betweenData.start.toSqlString();
+            query += " AND ";
+            query += betweenData.end.toSqlString();
             break;
+        }
 
-        case Type::SimpleValue:
-            oss << column_ << " " << opToString(op_) << " " << values_[0].toSqlString();
+        case Type::SimpleValue: {
+            const auto& simpleData = std::get<SimpleConditionData>(data_);
+            query += column_;
+            query += " ";
+            query += this->opToString(op_);
+            query += " ";
+            query += simpleData.value.toSqlString();
             break;
+        }
 
-        case Type::ColumnColumn:
-            if (!table_.empty() && !right_table_.empty()) {
+        case Type::ColumnColumn: {
+            const auto& colData = std::get<ColumnColumnData>(data_);
+            if (!table_.empty() && !colData.right_table.empty()) {
                 // Fully qualified names for explicit JOINs
-                oss << table_ << "." << column_ << " " << opToString(op_) << " "
-                    << right_table_ << "." << right_column_;
+                query += table_;
+                query += ".";
+                query += column_;
+                query += " ";
+                query += this->opToString(op_);
+                query += " ";
+                query += colData.right_table;
+                query += ".";
+                query += colData.right_column;
             } else {
                 // Just column names
-                oss << column_ << " " << opToString(op_) << " " << right_column_;
+                query += column_;
+                query += " ";
+                query += this->opToString(op_);
+                query += " ";
+                query += colData.right_column;
             }
             break;
+        }
 
-        case Type::Compound:
-            if (compound_) {
-                oss << "(";
-                compound_->left.toString(oss);
-                oss << ") " << opToString(op_) << " (";
-                compound_->right.toString(oss);
-                oss << ")";
-            } else {
-                oss << "INVALID COMPOUND CONDITION";
-            }
+        case Type::Compound: {
+            const auto& compoundData = std::get<CompoundConditionData>(data_);
+            query += "(";
+            query += compoundData.left_condition;
+            query += ") ";
+            query += this->opToString(compoundData.op);
+            query += " (";
+            query += compoundData.right_condition;
+            query += ")";
             break;
+        }
 
-        case Type::In:
-            oss << column_ << (op_ == Op::In ? " IN (" : " NOT IN (");
-            for (size_t i = 0; i < in_values_count_; ++i) {
-                if (i > 0) oss << ", ";
-                oss << in_values_[i].toSqlString();
+        case Type::In: {
+            const auto& inData = std::get<InConditionData>(data_);
+            query += column_;
+            query += (op_ == Op::In ? " IN (" : " NOT IN (");
+            for (size_t i = 0; i < inData.count; ++i) {
+                if (i > 0) query += ", ";
+                query += inData.values[i].toSqlString();
             }
-            oss << ")";
+            query += ")";
             break;
+        }
 
         default:
-            oss << "UNKNOWN CONDITION TYPE";
+            query += "UNKNOWN CONDITION TYPE";
             break;
         }
 
         if (negated_) {
-            oss << ")";
+            query += ")";
         }
     }
 
-    // Return the string representation
     std::string toString() const {
-        std::ostringstream oss;
-        toString(oss);
-        return oss.str();
+        std::string result;
+        result.reserve(100); // Reserve a reasonable initial size
+        toString(result);
+        return result;
     }
 
-    // Helper methods for TypedColumn implementation
     [[nodiscard]] bool isValid() const { return type_ != Type::Invalid; }
     [[nodiscard]] Type getType() const { return type_; }
 };
 
-// Column class
+// Expression template for delayed condition evaluation
+template<typename Left, typename Right, typename Op, typename Config = DefaultConfig>
+class ConditionExpression {
+private:
+    Left left_;
+    Right right_;
+
+public:
+    ConditionExpression(Left left, Right right)
+        : left_(std::move(left)), right_(std::move(right)) {}
+
+    operator Condition<Config>() const {
+        // Construct the actual condition only when needed
+        if constexpr (std::is_same_v<Op, typename ConditionBase<Config>::Op>) {
+            // Handle direct operations
+            return Condition<Config>(left_, Op::value, right_);
+        } else {
+            // Handle compound conditions (AND/OR)
+            Condition<Config> leftCond = left_;
+            Condition<Config> rightCond = right_;
+            if constexpr (std::is_same_v<Op, std::logical_and<>>) {
+                return leftCond && rightCond;
+            } else if constexpr (std::is_same_v<Op, std::logical_or<>>) {
+                return leftCond || rightCond;
+            }
+        }
+    }
+
+    // Allow combining with other expressions
+    template<typename OtherRight, typename OtherOp>
+    auto operator&&(const ConditionExpression<Right, OtherRight, OtherOp, Config>& other) const {
+        return ConditionExpression<ConditionExpression, ConditionExpression<Right, OtherRight, OtherOp, Config>, std::logical_and<>, Config>(*this, other);
+    }
+
+    template<typename OtherRight, typename OtherOp>
+    auto operator||(const ConditionExpression<Right, OtherRight, OtherOp, Config>& other) const {
+        return ConditionExpression<ConditionExpression, ConditionExpression<Right, OtherRight, OtherOp, Config>, std::logical_or<>, Config>(*this, other);
+    }
+};
+
+// Column class with non-template base implementation
 template<typename Config>
 class Column {
     std::string_view name_;
@@ -673,64 +839,73 @@ public:
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> eq(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Eq, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Eq, SqlValue<Config>(std::forward<T>(value)));
     }
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> ne(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Ne, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ne, SqlValue<Config>(std::forward<T>(value)));
     }
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> lt(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Lt, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Lt, SqlValue<Config>(std::forward<T>(value)));
     }
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> le(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Le, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Le, SqlValue<Config>(std::forward<T>(value)));
     }
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> gt(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Gt, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Gt, SqlValue<Config>(std::forward<T>(value)));
     }
 
     template<SqlCompatible T>
     [[nodiscard]] Condition<Config> ge(T&& value) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Ge, SqlValue<Config>(std::forward<T>(value)));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Ge, SqlValue<Config>(std::forward<T>(value)));
     }
 
     [[nodiscard]] Condition<Config> like(std::string_view pattern) const {
-        return Condition<Config>(name_, Condition<Config>::Op::Like, SqlValue<Config>(pattern));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::Like, SqlValue<Config>(pattern));
     }
 
     [[nodiscard]] Condition<Config> notLike(std::string_view pattern) const {
-        return Condition<Config>(name_, Condition<Config>::Op::NotLike, SqlValue<Config>(pattern));
+        using Op = typename ConditionBase<Config>::Op;
+        return Condition<Config>(name_, Op::NotLike, SqlValue<Config>(pattern));
     }
 
     template<SqlCompatible T, SqlCompatible U>
     [[nodiscard]] Condition<Config> between(T&& start, U&& end) const {
+        using Op = typename ConditionBase<Config>::Op;
         return Condition<Config>(
             name_,
-            Condition<Config>::Op::Between,
+            Op::Between,
             SqlValue<Config>(std::forward<T>(start)),
             SqlValue<Config>(std::forward<U>(end))
             );
     }
 
-    template<typename T>
-    [[nodiscard]] Condition<Config> in(std::span<const T> values) const {
+    template<typename U>
+    [[nodiscard]] Condition<Config> in(std::span<const U> values) const {
         return Condition<Config>::in(name_, values);
     }
 
-    template<typename T>
-    [[nodiscard]] Condition<Config> notIn(std::span<const T> values) const {
+    template<typename U>
+    [[nodiscard]] Condition<Config> notIn(std::span<const U> values) const {
         return Condition<Config>::notIn(name_, values);
     }
 };
 
-// TypedColumn
+// TypedColumn implementation
 template<typename T, typename Config>
 Condition<Config> TypedColumn<T, Config>::isNull() const {
     return Condition<Config>::isNull(name_);
@@ -744,91 +919,106 @@ Condition<Config> TypedColumn<T, Config>::isNotNull() const {
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::eq(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Eq, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Eq, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::eq(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Eq, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Eq, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::ne(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ne, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Ne, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::ne(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Ne, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Ne, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::lt(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Lt, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Lt, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::lt(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Lt, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Lt, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::le(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Le, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Le, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::le(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Le, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Le, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::gt(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Gt, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Gt, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::gt(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Gt, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Gt, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 template<SqlCompatible U>
 Condition<Config> TypedColumn<T, Config>::ge(U&& value) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Ge, SqlValue<Config>(std::forward<U>(value)));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Ge, SqlValue<Config>(std::forward<U>(value)));
 }
 
 template<typename T, typename Config>
 template<typename OtherType, typename OtherConfig>
 Condition<Config> TypedColumn<T, Config>::ge(const TypedColumn<OtherType, OtherConfig>& other) const {
-    return Condition<Config>(table_, name_, Condition<Config>::Op::Ge, other.tableName(), other.name());
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(table_, name_, Op::Ge, other.tableName(), other.name());
 }
 
 template<typename T, typename Config>
 Condition<Config> TypedColumn<T, Config>::like(std::string_view pattern) const {
-    return Condition<Config>(name_, Condition<Config>::Op::Like, SqlValue<Config>(pattern));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::Like, SqlValue<Config>(pattern));
 }
 
 template<typename T, typename Config>
 Condition<Config> TypedColumn<T, Config>::notLike(std::string_view pattern) const {
-    return Condition<Config>(name_, Condition<Config>::Op::NotLike, SqlValue<Config>(pattern));
+    using Op = typename ConditionBase<Config>::Op;
+    return Condition<Config>(name_, Op::NotLike, SqlValue<Config>(pattern));
 }
 
 template<typename T, typename Config>
 template<SqlCompatible T1, SqlCompatible T2>
 Condition<Config> TypedColumn<T, Config>::between(T1&& start, T2&& end) const {
+    using Op = typename ConditionBase<Config>::Op;
     return Condition<Config>(
         name_,
-        Condition<Config>::Op::Between,
+        Op::Between,
         SqlValue<Config>(std::forward<T1>(start)),
         SqlValue<Config>(std::forward<T2>(end))
         );
@@ -1004,6 +1194,7 @@ template<typename Config>
 inline Condition<Config> operator>=(const Column<Config>& col, const QDateTime& val) {
     return col.ge(val);
 }
+
 inline std::ostream& operator<<(std::ostream& os, const QString& str) {
     return os << str.toStdString();
 }
@@ -1026,43 +1217,68 @@ class ColumnRef {
 private:
     std::string_view column_;
     SqlFunction function_ = SqlFunction::None;
+    std::string_view alias_; // Optional column alias
 
 public:
     ColumnRef() = default;
 
-    explicit ColumnRef(std::string_view column, SqlFunction function = SqlFunction::None)
-        : column_(column), function_(function) {}
+    explicit ColumnRef(std::string_view column, SqlFunction function = SqlFunction::None, std::string_view alias = "")
+        : column_(column), function_(function), alias_(alias) {}
 
     std::string_view column() const { return column_; }
     SqlFunction function() const { return function_; }
+    std::string_view alias() const { return alias_; }
 
-    void toSql(std::ostringstream& oss) const {
+    // Create an aliased column
+    ColumnRef as(std::string_view alias) const {
+        return ColumnRef(column_, function_, alias);
+    }
+
+    void toSql(std::string& query) const {
         switch (function_) {
         case SqlFunction::Count:
-            oss << "COUNT(" << column_ << ")";
+            query += "COUNT(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::Sum:
-            oss << "SUM(" << column_ << ")";
+            query += "SUM(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::Avg:
-            oss << "AVG(" << column_ << ")";
+            query += "AVG(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::Min:
-            oss << "MIN(" << column_ << ")";
+            query += "MIN(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::Max:
-            oss << "MAX(" << column_ << ")";
+            query += "MAX(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::GroupConcat:
-            oss << "GROUP_CONCAT(" << column_ << ")";
+            query += "GROUP_CONCAT(";
+            query += column_;
+            query += ")";
             break;
         case SqlFunction::None:
         default:
-            oss << column_;
+            query += column_;
             break;
+        }
+
+        if (!alias_.empty()) {
+            query += " AS ";
+            query += alias_;
         }
     }
 };
+
 // Join class
 template<typename Config>
 class Join {
@@ -1080,7 +1296,7 @@ public:
     Join(Type type, std::string_view table, std::string_view condition)
         : type_(type), table_(table), condition_(condition) {}
 
-    void toString(std::ostringstream& oss) const {
+    void toString(std::string& query) const {
         const char* type_str = "";
         switch (type_) {
         case Type::Inner: type_str = "INNER JOIN"; break;
@@ -1090,61 +1306,130 @@ public:
         case Type::Cross: type_str = "CROSS JOIN"; break;
         }
 
-        oss << type_str << " " << table_ << " ON " << condition_;
+        query += type_str;
+        query += " ";
+        query += table_;
+        query += " ON ";
+        query += condition_;
     }
 
     [[nodiscard]] std::string toString() const {
-        std::ostringstream oss;
-        toString(oss);
-        return oss.str();
+        std::string result;
+        result.reserve(table_.size() + condition_.size() + 20);
+        toString(result);
+        return result;
     }
 };
 
-// QueryBuilder class
+// A class that holds a fluent where builder for complex conditions
+template<typename Config>
+class WhereBuilder {
+private:
+    using ConditionFn = std::function<void(WhereBuilder<Config>&)>;
+    Condition<Config> condition_;
+
+public:
+    WhereBuilder() = default;
+
+    WhereBuilder& condition(const Condition<Config>& cond) {
+        condition_ = cond;
+        return *this;
+    }
+
+    WhereBuilder& and_(const Condition<Config>& cond) {
+        if (condition_.isValid()) {
+            condition_ = condition_ && cond;
+        } else {
+            condition_ = cond;
+        }
+        return *this;
+    }
+
+    WhereBuilder& or_(const Condition<Config>& cond) {
+        if (condition_.isValid()) {
+            condition_ = condition_ || cond;
+        } else {
+            condition_ = cond;
+        }
+        return *this;
+    }
+
+    WhereBuilder& and_(ConditionFn builder) {
+        WhereBuilder<Config> subBuilder;
+        builder(subBuilder);
+        return and_(subBuilder.build());
+    }
+
+    WhereBuilder& or_(ConditionFn builder) {
+        WhereBuilder<Config> subBuilder;
+        builder(subBuilder);
+        return or_(subBuilder.build());
+    }
+
+    Condition<Config> build() const {
+        return condition_;
+    }
+
+    operator Condition<Config>() const {
+        return build();
+    }
+};
+
+
 template<typename Config = DefaultConfig>
 class QueryBuilder {
 public:
     enum class QueryType : uint8_t { Select, Insert, InsertOrReplace, Update, Delete, Truncate };
 
 private:
-    QueryType type_{QueryType::Select};
-    std::string_view table_;
+    // Core frequently accessed fields
+    struct {
+        QueryType type{QueryType::Select};
+        std::string_view table;
+        bool distinct{false};
+    } core_;
 
-    std::array<ColumnRef<Config>, Config::MaxColumns> select_columns_{};
-    size_t select_columns_count_{0};
+    // Columns and values (high-frequency access)
+    struct {
+        std::array<ColumnRef<Config>, Config::MaxColumns> select_columns{};
+        size_t select_columns_count{0};
+        std::array<std::pair<std::string_view, SqlValue<Config>>, Config::MaxColumns> values{};
+        size_t values_count{0};
+    } columns_;
 
-    std::array<std::pair<std::string_view, SqlValue<Config>>, Config::MaxColumns> values_{};
-    size_t values_count_{0};
+    // Conditions and joins (medium-frequency access)
+    struct {
+        std::array<Condition<Config>, Config::MaxConditions> where_conditions{};
+        size_t where_conditions_count{0};
+        std::array<Join<Config>, Config::MaxJoins> joins{};
+        size_t joins_count{0};
+    } filters_;
 
-    std::array<Condition<Config>, Config::MaxConditions> where_conditions_{};
-    size_t where_conditions_count_{0};
+    // Ordering, grouping, and limits (low-frequency access)
+    struct {
+        std::array<std::pair<std::string_view, bool>, Config::MaxOrderBy> order_by{};
+        size_t order_by_count{0};
+        std::array<std::string_view, Config::MaxGroupBy> group_by{};
+        size_t group_by_count{0};
+        std::string_view having;
+        int32_t limit{-1};
+        int32_t offset{-1};
+    } ordering_;
 
-    std::array<Join<Config>, Config::MaxJoins> joins_{};
-    size_t joins_count_{0};
-
-    std::array<std::pair<std::string_view, bool>, Config::MaxOrderBy> order_by_{};
-    size_t order_by_count_{0};
-
-    std::array<std::string_view, Config::MaxGroupBy> group_by_{};
-    size_t group_by_count_{0};
-
-    std::string_view having_;
-    int32_t limit_{-1};
-    int32_t offset_{-1};
-    bool distinct_{false};
+    // Error handling
     mutable std::optional<QueryError> last_error_;
 
     [[nodiscard]] size_t estimateSize() const {
         size_t size = 64; // Base size
-        size += table_.size();
-        size += select_columns_count_ * 10;
-        size += where_conditions_count_ * 30;
-        size += joins_count_ * 40;
-        size += order_by_count_ * 15;
-        size += group_by_count_ * 15;
-        size += having_.size();
-        if (limit_ >= 0) size += 15;
-        if (offset_ >= 0) size += 15;
+        size += core_.table.size();
+        size += columns_.select_columns_count * 20; // Average column name size + potential function/alias
+        size += filters_.where_conditions_count * 50; // Average condition size
+        size += filters_.joins_count * 60; // Average join size
+        size += ordering_.order_by_count * 25; // Column name + ASC/DESC
+        size += ordering_.group_by_count * 15; // Column name
+        size += ordering_.having.size();
+        if (ordering_.limit >= 0) size += 15;
+        if (ordering_.offset >= 0) size += 15;
         return size;
     }
 
@@ -1152,18 +1437,22 @@ public:
     QueryBuilder() = default;
 
     QueryBuilder& reset() {
-        type_ = QueryType::Select;
-        table_ = "";
-        select_columns_count_ = 0;
-        values_count_ = 0;
-        where_conditions_count_ = 0;
-        joins_count_ = 0;
-        order_by_count_ = 0;
-        group_by_count_ = 0;
-        having_ = "";
-        limit_ = -1;
-        offset_ = -1;
-        distinct_ = false;
+        core_.type = QueryType::Select;
+        core_.table = "";
+        core_.distinct = false;
+
+        columns_.select_columns_count = 0;
+        columns_.values_count = 0;
+
+        filters_.where_conditions_count = 0;
+        filters_.joins_count = 0;
+
+        ordering_.order_by_count = 0;
+        ordering_.group_by_count = 0;
+        ordering_.having = "";
+        ordering_.limit = -1;
+        ordering_.offset = -1;
+
         last_error_ = std::nullopt;
         return *this;
     }
@@ -1174,10 +1463,11 @@ public:
 
     template<typename... Cols>
     QueryBuilder& select(Cols&&... cols) {
-        type_ = QueryType::Select;
+        static_assert((QueryType::Select == QueryType::Select), "SELECT can only be used with SELECT queries");
+        core_.type = QueryType::Select;
         const size_t additional = sizeof...(cols);
 
-        if (select_columns_count_ + additional > Config::MaxColumns) {
+        if (columns_.select_columns_count + additional > Config::MaxColumns) {
             auto error = QueryError(QueryError::Code::TooManyColumns,
                                     std::format("Too many columns: limit is {}", Config::MaxColumns));
             last_error_ = error;
@@ -1193,9 +1483,10 @@ public:
 
     template<typename T, size_t Extent>
     QueryBuilder& select(std::span<const T, Extent> cols) {
-        type_ = QueryType::Select;
+        static_assert((QueryType::Select == QueryType::Select), "SELECT can only be used with SELECT queries");
+        core_.type = QueryType::Select;
 
-        if (select_columns_count_ + cols.size() > Config::MaxColumns) {
+        if (columns_.select_columns_count + cols.size() > Config::MaxColumns) {
             auto error = QueryError(QueryError::Code::TooManyColumns,
                                     std::format("Too many columns: limit is {}", Config::MaxColumns));
             last_error_ = error;
@@ -1207,7 +1498,7 @@ public:
 
         for (const auto& col : cols) {
             if constexpr (std::is_convertible_v<T, std::string_view>) {
-                select_columns_[select_columns_count_++] = ColumnRef<Config>(static_cast<std::string_view>(col));
+                columns_.select_columns[columns_.select_columns_count++] = ColumnRef<Config>(static_cast<std::string_view>(col));
             }
         }
         return *this;
@@ -1216,9 +1507,9 @@ public:
     template<typename T>
     void addSelectColumn(const T& col) {
         if constexpr (std::is_same_v<std::remove_cvref_t<T>, ColumnRef<Config>>) {
-            select_columns_[select_columns_count_++] = col;
+            columns_.select_columns[columns_.select_columns_count++] = col;
         } else if constexpr (std::is_convertible_v<T, std::string_view>) {
-            select_columns_[select_columns_count_++] = ColumnRef<Config>(static_cast<std::string_view>(col));
+            columns_.select_columns[columns_.select_columns_count++] = ColumnRef<Config>(static_cast<std::string_view>(col));
         } else {
             static_assert(std::is_convertible_v<T, std::string_view> ||
                               std::is_same_v<std::remove_cvref_t<T>, ColumnRef<Config>>,
@@ -1228,9 +1519,10 @@ public:
 
     // Select from span
     QueryBuilder& select(std::span<const std::string_view> cols) {
-        type_ = QueryType::Select;
+        static_assert((QueryType::Select == QueryType::Select), "SELECT can only be used with SELECT queries");
+        core_.type = QueryType::Select;
 
-        if (select_columns_count_ + cols.size() > Config::MaxColumns) {
+        if (columns_.select_columns_count + cols.size() > Config::MaxColumns) {
             auto error = QueryError(QueryError::Code::TooManyColumns,
                                     std::format("Too many columns: limit is {}", Config::MaxColumns));
             last_error_ = error;
@@ -1241,7 +1533,7 @@ public:
         }
 
         for (const auto& col : cols) {
-            select_columns_[select_columns_count_++] = col;
+            columns_.select_columns[columns_.select_columns_count++] = ColumnRef<Config>(col);
         }
         return *this;
     }
@@ -1256,17 +1548,27 @@ public:
     template<typename T>
     QueryBuilder& from(const T& table) {
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
+        } else if constexpr (std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>) {
+            core_.table = table.toString();
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>,
                           "Table type not supported for from");
         }
         return *this;
     }
 
+    template<typename Fn>
+    QueryBuilder& where(Fn builderFn) {
+        WhereBuilder<Config> builder;
+        builderFn(builder);
+        return where(builder.build());
+    }
+
     template<typename OtherConfig>
     QueryBuilder& where(const Condition<OtherConfig>& condition) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1277,13 +1579,13 @@ public:
         }
 
         // Convert condition from OtherConfig to our Config
-        where_conditions_[where_conditions_count_++] = Condition<Config>(condition);
+        filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(condition);
         return *this;
     }
 
     template<SqlCompatible T>
-    QueryBuilder& whereOp(std::string_view column, typename Condition<Config>::Op op, T&& value) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+    QueryBuilder& whereOp(std::string_view column, typename ConditionBase<Config>::Op op, T&& value) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1293,16 +1595,18 @@ public:
             return *this;
         }
 
-        where_conditions_[where_conditions_count_++] = Condition<Config>(
+        filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(
             column, op, SqlValue<Config>(std::forward<T>(value))
             );
         return *this;
     }
 
-    // OrderBy with bounds checking
+    // OrderBy with bounds checking and compile-time validation
     template<typename T>
     QueryBuilder& orderBy(const T& column, bool asc = true) {
-        if (order_by_count_ >= Config::MaxOrderBy) {
+        static_assert((QueryType::Select == QueryType::Select), "ORDER BY can only be used with SELECT queries");
+
+        if (ordering_.order_by_count >= Config::MaxOrderBy) {
             auto error = QueryError(QueryError::Code::TooManyOrderBy,
                                     std::format("Too many order by clauses: limit is {}", Config::MaxOrderBy));
             last_error_ = error;
@@ -1313,7 +1617,7 @@ public:
         }
 
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            order_by_[order_by_count_++] = {static_cast<std::string_view>(column), asc};
+            ordering_.order_by[ordering_.order_by_count++] = {static_cast<std::string_view>(column), asc};
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Column type not supported for orderBy");
@@ -1322,26 +1626,29 @@ public:
     }
 
     QueryBuilder& limit(int32_t limit) {
-        limit_ = limit;
+        static_assert((QueryType::Select == QueryType::Select), "LIMIT can only be used with SELECT queries");
+        ordering_.limit = limit;
         return *this;
     }
 
     QueryBuilder& offset(int32_t offset) {
-        offset_ = offset;
+        static_assert((QueryType::Select == QueryType::Select), "OFFSET can only be used with SELECT queries");
+        ordering_.offset = offset;
         return *this;
     }
 
     QueryBuilder& distinct() {
-        distinct_ = true;
+        static_assert((QueryType::Select == QueryType::Select), "DISTINCT can only be used with SELECT queries");
+        core_.distinct = true;
         return *this;
     }
 
     // Insert with bounds checking
     template<typename T>
     QueryBuilder& insert(const T& table) {
-        type_ = QueryType::Insert;
+        core_.type = QueryType::Insert;
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Table type not supported for insert");
@@ -1352,9 +1659,9 @@ public:
     // Insert OR REPLACE with bounds checking
     template<typename T>
     QueryBuilder& insertOrReplace(const T& table) {
-        type_ = QueryType::InsertOrReplace;
+        core_.type = QueryType::InsertOrReplace;
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Table type not supported for insertOrReplace");
@@ -1364,7 +1671,7 @@ public:
 
     template<typename Col, SqlCompatible T>
     QueryBuilder& value(const Col& column, T&& val) {
-        if (values_count_ >= Config::MaxColumns) {
+        if (columns_.values_count >= Config::MaxColumns) {
             auto error = QueryError(QueryError::Code::TooManyColumns,
                                     std::format("Too many values: limit is {}", Config::MaxColumns));
             last_error_ = error;
@@ -1376,9 +1683,9 @@ public:
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
             // Direct assignment of the pair at the current index
-            values_[values_count_].first = static_cast<std::string_view>(column);
-            values_[values_count_].second = SqlValue<Config>(std::forward<T>(val));
-            values_count_++;
+            columns_.values[columns_.values_count].first = static_cast<std::string_view>(column);
+            columns_.values[columns_.values_count].second = SqlValue<Config>(std::forward<T>(val));
+            columns_.values_count++;
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for value");
@@ -1389,9 +1696,9 @@ public:
     // Update methods
     template<typename T>
     QueryBuilder& update(const T& table) {
-        type_ = QueryType::Update;
+        core_.type = QueryType::Update;
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Table type not supported for update");
@@ -1401,7 +1708,7 @@ public:
 
     template<typename Col, SqlCompatible T>
     QueryBuilder& set(const Col& column, T&& val) {
-        if (values_count_ >= Config::MaxColumns) {
+        if (columns_.values_count >= Config::MaxColumns) {
             auto error = QueryError(QueryError::Code::TooManyColumns,
                                     std::format("Too many values: limit is {}", Config::MaxColumns));
             last_error_ = error;
@@ -1413,9 +1720,9 @@ public:
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
             // Direct assignment of the pair at the current index
-            values_[values_count_].first = static_cast<std::string_view>(column);
-            values_[values_count_].second = SqlValue<Config>(std::forward<T>(val));
-            values_count_++;
+            columns_.values[columns_.values_count].first = static_cast<std::string_view>(column);
+            columns_.values[columns_.values_count].second = SqlValue<Config>(std::forward<T>(val));
+            columns_.values_count++;
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for set");
@@ -1426,9 +1733,9 @@ public:
     // Delete methods
     template<typename T>
     QueryBuilder& deleteFrom(const T& table) {
-        type_ = QueryType::Delete;
+        core_.type = QueryType::Delete;
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Table type not supported for deleteFrom");
@@ -1439,9 +1746,9 @@ public:
     // Truncate methods
     template<typename T>
     QueryBuilder& truncate(const T& table) {
-        type_ = QueryType::Truncate;
+        core_.type = QueryType::Truncate;
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            table_ = static_cast<std::string_view>(table);
+            core_.table = static_cast<std::string_view>(table);
         } else {
             static_assert(std::is_convertible_v<T, std::string_view>,
                           "Table type not supported for truncate");
@@ -1452,7 +1759,8 @@ public:
     // Join methods with bounds checking
     template<typename T>
     QueryBuilder& innerJoin(const T& table, std::string_view condition) {
-        if (joins_count_ >= Config::MaxJoins) {
+        static_assert((QueryType::Select == QueryType::Select), "JOIN can only be used with SELECT queries");
+        if (filters_.joins_count >= Config::MaxJoins) {
             auto error = QueryError(QueryError::Code::TooManyJoins,
                                     std::format("Too many joins: limit is {}", Config::MaxJoins));
             last_error_ = error;
@@ -1463,21 +1771,34 @@ public:
         }
 
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            joins_[joins_count_++] = Join<Config>{
+            filters_.joins[filters_.joins_count++] = Join<Config>{
                 Join<Config>::Type::Inner,
                 static_cast<std::string_view>(table),
                 condition
             };
+        } else if constexpr (std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>) {
+            filters_.joins[filters_.joins_count++] = Join<Config>{
+                Join<Config>::Type::Inner,
+                table.toString(),
+                condition
+            };
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>,
                           "Table type not supported for innerJoin");
         }
         return *this;
     }
 
+    template<typename T, typename L, typename R>
+    QueryBuilder& innerJoin(const T& table, const Condition<Config>& condition) {
+        return innerJoin(table, condition.toString());
+    }
+
     template<typename T>
     QueryBuilder& leftJoin(const T& table, std::string_view condition) {
-        if (joins_count_ >= Config::MaxJoins) {
+        static_assert((QueryType::Select == QueryType::Select), "JOIN can only be used with SELECT queries");
+        if (filters_.joins_count >= Config::MaxJoins) {
             auto error = QueryError(QueryError::Code::TooManyJoins,
                                     std::format("Too many joins: limit is {}", Config::MaxJoins));
             last_error_ = error;
@@ -1488,21 +1809,34 @@ public:
         }
 
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            joins_[joins_count_++] = Join<Config>{
+            filters_.joins[filters_.joins_count++] = Join<Config>{
                 Join<Config>::Type::Left,
                 static_cast<std::string_view>(table),
                 condition
             };
+        } else if constexpr (std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>) {
+            filters_.joins[filters_.joins_count++] = Join<Config>{
+                Join<Config>::Type::Left,
+                table.toString(),
+                condition
+            };
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>,
                           "Table type not supported for leftJoin");
         }
         return *this;
     }
 
     template<typename T>
+    QueryBuilder& leftJoin(const T& table, const Condition<Config>& condition) {
+        return leftJoin(table, condition.toString());
+    }
+
+    template<typename T>
     QueryBuilder& rightJoin(const T& table, std::string_view condition) {
-        if (joins_count_ >= Config::MaxJoins) {
+        static_assert((QueryType::Select == QueryType::Select), "JOIN can only be used with SELECT queries");
+        if (filters_.joins_count >= Config::MaxJoins) {
             auto error = QueryError(QueryError::Code::TooManyJoins,
                                     std::format("Too many joins: limit is {}", Config::MaxJoins));
             last_error_ = error;
@@ -1513,21 +1847,34 @@ public:
         }
 
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            joins_[joins_count_++] = Join<Config>{
+            filters_.joins[filters_.joins_count++] = Join<Config>{
                 Join<Config>::Type::Right,
                 static_cast<std::string_view>(table),
                 condition
             };
+        } else if constexpr (std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>) {
+            filters_.joins[filters_.joins_count++] = Join<Config>{
+                Join<Config>::Type::Right,
+                table.toString(),
+                condition
+            };
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>,
                           "Table type not supported for rightJoin");
         }
         return *this;
     }
 
     template<typename T>
+    QueryBuilder& rightJoin(const T& table, const Condition<Config>& condition) {
+        return rightJoin(table, condition.toString());
+    }
+
+    template<typename T>
     QueryBuilder& fullJoin(const T& table, std::string_view condition) {
-        if (joins_count_ >= Config::MaxJoins) {
+        static_assert((QueryType::Select == QueryType::Select), "JOIN can only be used with SELECT queries");
+        if (filters_.joins_count >= Config::MaxJoins) {
             auto error = QueryError(QueryError::Code::TooManyJoins,
                                     std::format("Too many joins: limit is {}", Config::MaxJoins));
             last_error_ = error;
@@ -1538,22 +1885,34 @@ public:
         }
 
         if constexpr (std::is_convertible_v<T, std::string_view>) {
-            joins_[joins_count_++] = Join<Config>{
+            filters_.joins[filters_.joins_count++] = Join<Config>{
                 Join<Config>::Type::Full,
                 static_cast<std::string_view>(table),
                 condition
             };
+        } else if constexpr (std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>) {
+            filters_.joins[filters_.joins_count++] = Join<Config>{
+                Join<Config>::Type::Full,
+                table.toString(),
+                condition
+            };
         } else {
-            static_assert(std::is_convertible_v<T, std::string_view>,
+            static_assert(std::is_convertible_v<T, std::string_view> ||
+                              std::is_same_v<std::remove_cvref_t<T>, AliasedTable<Config>>,
                           "Table type not supported for fullJoin");
         }
         return *this;
     }
 
+    template<typename T>
+    QueryBuilder& fullJoin(const T& table, const Condition<Config>& condition) {
+        return fullJoin(table, condition.toString());
+    }
+
     // Where variations
     template<typename Col, typename T>
     QueryBuilder& whereIn(const Col& column, std::span<const T> values) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1565,7 +1924,7 @@ public:
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
             auto condition = Condition<Config>::in(static_cast<std::string_view>(column), values);
-            where_conditions_[where_conditions_count_++] = std::move(condition);
+            filters_.where_conditions[filters_.where_conditions_count++] = std::move(condition);
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for whereIn");
@@ -1575,7 +1934,7 @@ public:
 
     template<typename Col, typename T>
     QueryBuilder& whereNotIn(const Col& column, std::span<const T> values) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1587,7 +1946,7 @@ public:
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
             auto condition = Condition<Config>::notIn(static_cast<std::string_view>(column), values);
-            where_conditions_[where_conditions_count_++] = std::move(condition);
+            filters_.where_conditions[filters_.where_conditions_count++] = std::move(condition);
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for whereNotIn");
@@ -1597,7 +1956,7 @@ public:
 
     template<typename Col, typename T, typename U>
     QueryBuilder& whereBetween(const Col& column, T&& start, U&& end) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1608,9 +1967,10 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>(
+            using Op = typename ConditionBase<Config>::Op;
+            filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(
                 static_cast<std::string_view>(column),
-                Condition<Config>::Op::Between,
+                Op::Between,
                 SqlValue<Config>(std::forward<T>(start)),
                 SqlValue<Config>(std::forward<U>(end))
                 );
@@ -1623,7 +1983,7 @@ public:
 
     template<typename Col>
     QueryBuilder& whereLike(const Col& column, std::string_view pattern) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1634,9 +1994,10 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>(
+            using Op = typename ConditionBase<Config>::Op;
+            filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(
                 static_cast<std::string_view>(column),
-                Condition<Config>::Op::Like,
+                Op::Like,
                 SqlValue<Config>(pattern)
                 );
         } else {
@@ -1648,7 +2009,7 @@ public:
 
     template<typename Col>
     QueryBuilder& whereNull(const Col& column) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1659,7 +2020,7 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>::isNull(
+            filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>::isNull(
                 static_cast<std::string_view>(column)
                 );
         } else {
@@ -1671,7 +2032,7 @@ public:
 
     template<typename Col>
     QueryBuilder& whereNotNull(const Col& column) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1682,7 +2043,7 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            where_conditions_[where_conditions_count_++] = Condition<Config>::isNotNull(
+            filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>::isNotNull(
                 static_cast<std::string_view>(column)
                 );
         } else {
@@ -1693,7 +2054,7 @@ public:
     }
 
     QueryBuilder& whereExists(std::string_view subquery) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1704,12 +2065,12 @@ public:
         }
 
         std::string condition = std::string("EXISTS (") + std::string(subquery) + ")";
-        where_conditions_[where_conditions_count_++] = Condition<Config>(condition);
+        filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(condition);
         return *this;
     }
 
     QueryBuilder& whereRaw(std::string_view rawCondition) {
-        if (where_conditions_count_ >= Config::MaxConditions) {
+        if (filters_.where_conditions_count >= Config::MaxConditions) {
             auto error = QueryError(QueryError::Code::TooManyConditions,
                                     std::format("Too many conditions: limit is {}", Config::MaxConditions));
             last_error_ = error;
@@ -1719,13 +2080,14 @@ public:
             return *this;
         }
 
-        where_conditions_[where_conditions_count_++] = Condition<Config>(rawCondition);
+        filters_.where_conditions[filters_.where_conditions_count++] = Condition<Config>(rawCondition);
         return *this;
     }
 
     template<typename Col>
     QueryBuilder& groupBy(const Col& column) {
-        if (group_by_count_ >= Config::MaxGroupBy) {
+        static_assert((QueryType::Select == QueryType::Select), "GROUP BY can only be used with SELECT queries");
+        if (ordering_.group_by_count >= Config::MaxGroupBy) {
             auto error = QueryError(QueryError::Code::TooManyGroupBy,
                                     std::format("Too many group by clauses: limit is {}", Config::MaxGroupBy));
             last_error_ = error;
@@ -1736,7 +2098,7 @@ public:
         }
 
         if constexpr (std::is_convertible_v<Col, std::string_view>) {
-            group_by_[group_by_count_++] = static_cast<std::string_view>(column);
+            ordering_.group_by[ordering_.group_by_count++] = static_cast<std::string_view>(column);
         } else {
             static_assert(std::is_convertible_v<Col, std::string_view>,
                           "Column type not supported for groupBy");
@@ -1745,13 +2107,14 @@ public:
     }
 
     QueryBuilder& having(std::string_view condition) {
-        having_ = condition;
+        static_assert((QueryType::Select == QueryType::Select), "HAVING can only be used with SELECT queries");
+        ordering_.having = condition;
         return *this;
     }
 
     // Build with error handling
     [[nodiscard]] Result<std::string> buildResult() const {
-        if (table_.empty()) {
+        if (core_.table.empty() && core_.type != QueryType::Select) {
             QueryError error(QueryError::Code::EmptyTable, "Table name is required");
             last_error_ = error;
             return error;
@@ -1761,7 +2124,7 @@ public:
             std::string query;
             query.reserve(estimateSize());
 
-            switch (type_) {
+            switch (core_.type) {
             case QueryType::Select:
                 buildSelect(query);
                 break;
@@ -1817,158 +2180,207 @@ public:
 
 private:
     void buildSelect(std::string& query) const {
-        std::ostringstream oss;
-        oss << "SELECT ";
-        if (distinct_) oss << "DISTINCT ";
+        query += keywords::SELECT;
+        query += " ";
 
-        if (select_columns_count_ == 0) {
-            oss << "*";
+        if (core_.distinct) {
+            query += keywords::DISTINCT;
+            query += " ";
+        }
+
+        if (columns_.select_columns_count == 0) {
+            query += keywords::ALL;
         } else {
             bool first = true;
-            for (size_t i = 0; i < select_columns_count_; ++i) {
-                if (!first) oss << ", ";
-                select_columns_[i].toSql(oss);
+            for (size_t i = 0; i < columns_.select_columns_count; ++i) {
+                if (!first) query += ", ";
+                columns_.select_columns[i].toSql(query);
                 first = false;
             }
         }
 
-        oss << " FROM " << table_;
+        query += " ";
+        query += keywords::FROM;
+        query += " ";
+        query += core_.table;
 
         // Joins
-        for (size_t i = 0; i < joins_count_; ++i) {
-            oss << " ";
-            joins_[i].toString(oss);
+        for (size_t i = 0; i < filters_.joins_count; ++i) {
+            query += " ";
+            filters_.joins[i].toString(query);
         }
 
         // Where
-        if (where_conditions_count_ > 0) {
-            oss << " WHERE ";
+        if (filters_.where_conditions_count > 0) {
+            query += " ";
+            query += keywords::WHERE;
+            query += " ";
             bool first = true;
-            for (size_t i = 0; i < where_conditions_count_; ++i) {
-                if (!first) oss << " AND ";
-                where_conditions_[i].toString(oss);
+            for (size_t i = 0; i < filters_.where_conditions_count; ++i) {
+                if (!first) {
+                    query += " ";
+                    query += keywords::AND;
+                    query += " ";
+                }
+                filters_.where_conditions[i].toString(query);
                 first = false;
             }
         }
 
         // Group By
-        if (group_by_count_ > 0) {
-            oss << " GROUP BY ";
+        if (ordering_.group_by_count > 0) {
+            query += " ";
+            query += keywords::GROUP_BY;
+            query += " ";
             bool first = true;
-            for (size_t i = 0; i < group_by_count_; ++i) {
-                if (!first) oss << ", ";
-                oss << group_by_[i];
+            for (size_t i = 0; i < ordering_.group_by_count; ++i) {
+                if (!first) query += ", ";
+                query += ordering_.group_by[i];
                 first = false;
             }
 
-            if (!having_.empty()) {
-                oss << " HAVING " << having_;
+            if (!ordering_.having.empty()) {
+                query += " ";
+                query += keywords::HAVING;
+                query += " ";
+                query += ordering_.having;
             }
         }
 
         // Order By
-        if (order_by_count_ > 0) {
-            oss << " ORDER BY ";
+        if (ordering_.order_by_count > 0) {
+            query += " ";
+            query += keywords::ORDER_BY;
+            query += " ";
             bool first = true;
-            for (size_t i = 0; i < order_by_count_; ++i) {
-                if (!first) oss << ", ";
-                oss << order_by_[i].first << (order_by_[i].second ? " ASC" : " DESC");
+            for (size_t i = 0; i < ordering_.order_by_count; ++i) {
+                if (!first) query += ", ";
+                query += ordering_.order_by[i].first;
+                query += " ";
+                query += (ordering_.order_by[i].second ? keywords::ASC : keywords::DESC);
                 first = false;
             }
         }
 
-        if (limit_ >= 0) {
-            oss << " LIMIT " << limit_;
+        if (ordering_.limit >= 0) {
+            query += " ";
+            query += keywords::LIMIT;
+            query += " ";
+            query += std::to_string(ordering_.limit);
         }
 
-        if (offset_ >= 0) {
-            oss << " OFFSET " << offset_;
+        if (ordering_.offset >= 0) {
+            query += " ";
+            query += keywords::OFFSET;
+            query += " ";
+            query += std::to_string(ordering_.offset);
         }
-
-        query = oss.str();
     }
 
     void buildInsert(std::string& query, bool orReplace) const {
-        if (values_count_ == 0) {
+        if (columns_.values_count == 0) {
             throw QueryError(QueryError::Code::InvalidCondition, "No values specified for INSERT");
         }
 
-        std::ostringstream oss;
-        oss << "INSERT";
+        query += keywords::INSERT;
 
         if (orReplace) {
-            oss << " OR REPLACE";
+            query += " OR REPLACE";
         }
 
-        oss << " INTO " << table_ << " (";
+        query += " ";
+        query += keywords::INTO;
+        query += " ";
+        query += core_.table;
+        query += " (";
 
         bool first = true;
-        for (size_t i = 0; i < values_count_; ++i) {
-            if (!first) oss << ", ";
-            oss << values_[i].first;
+        for (size_t i = 0; i < columns_.values_count; ++i) {
+            if (!first) query += ", ";
+            query += columns_.values[i].first;
             first = false;
         }
 
-        oss << ") VALUES (";
+        query += ") ";
+        query += keywords::VALUES;
+        query += " (";
 
         first = true;
-        for (size_t i = 0; i < values_count_; ++i) {
-            if (!first) oss << ", ";
-            oss << values_[i].second.toSqlString();
+        for (size_t i = 0; i < columns_.values_count; ++i) {
+            if (!first) query += ", ";
+            query += columns_.values[i].second.toSqlString();
             first = false;
         }
 
-        oss << ")";
-        query = oss.str();
+        query += ")";
     }
 
     void buildUpdate(std::string& query) const {
-        if (values_count_ == 0) {
+        if (columns_.values_count == 0) {
             throw QueryError(QueryError::Code::InvalidCondition, "No values specified for UPDATE");
         }
 
-        std::ostringstream oss;
-        oss << "UPDATE " << table_ << " SET ";
+        query += keywords::UPDATE;
+        query += " ";
+        query += core_.table;
+        query += " ";
+        query += keywords::SET;
+        query += " ";
 
         bool first = true;
-        for (size_t i = 0; i < values_count_; ++i) {
-            if (!first) oss << ", ";
-            oss << values_[i].first << " = " << values_[i].second.toSqlString();
+        for (size_t i = 0; i < columns_.values_count; ++i) {
+            if (!first) query += ", ";
+            query += columns_.values[i].first;
+            query += " = ";
+            query += columns_.values[i].second.toSqlString();
             first = false;
         }
 
-        if (where_conditions_count_ > 0) {
-            oss << " WHERE ";
+        if (filters_.where_conditions_count > 0) {
+            query += " ";
+            query += keywords::WHERE;
+            query += " ";
             first = true;
-            for (size_t i = 0; i < where_conditions_count_; ++i) {
-                if (!first) oss << " AND ";
-                where_conditions_[i].toString(oss);
+            for (size_t i = 0; i < filters_.where_conditions_count; ++i) {
+                if (!first) {
+                    query += " ";
+                    query += keywords::AND;
+                    query += " ";
+                }
+                filters_.where_conditions[i].toString(query);
                 first = false;
             }
         }
-
-        query = oss.str();
     }
 
     void buildDelete(std::string& query) const {
-        std::ostringstream oss;
-        oss << "DELETE FROM " << table_;
+        query += keywords::DELETE;
+        query += " ";
+        query += keywords::FROM;
+        query += " ";
+        query += core_.table;
 
-        if (where_conditions_count_ > 0) {
-            oss << " WHERE ";
+        if (filters_.where_conditions_count > 0) {
+            query += " ";
+            query += keywords::WHERE;
+            query += " ";
             bool first = true;
-            for (size_t i = 0; i < where_conditions_count_; ++i) {
-                if (!first) oss << " AND ";
-                where_conditions_[i].toString(oss);
+            for (size_t i = 0; i < filters_.where_conditions_count; ++i) {
+                if (!first) {
+                    query += " ";
+                    query += keywords::AND;
+                    query += " ";
+                }
+                filters_.where_conditions[i].toString(query);
                 first = false;
             }
         }
-
-        query = oss.str();
     }
 
     void buildTruncate(std::string& query) const {
-        query = "TRUNCATE TABLE " + std::string(table_);
+        query += keywords::TRUNCATE;
+        query += " ";
+        query += core_.table;
     }
 };
 
@@ -2029,7 +2441,7 @@ inline SqlValue<Config> val(T&& value) {
 // All columns helper
 template<typename Config = DefaultConfig>
 inline std::string_view all_of(const Table<Config>&) {
-    return "*";
+    return keywords::ALL;
 }
 
 // Raw condition helper
