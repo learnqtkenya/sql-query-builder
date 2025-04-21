@@ -1,0 +1,79 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.0'
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          runVcpkgInstall: true
+
+      - name: Configure, Build and Test
+        uses: lukka/run-cmake@v10
+        with:
+          configurePreset: 'default'
+          configurePresetAdditionalArgs: "['-DCMAKE_BUILD_TYPE=Release']"
+          buildPreset: 'default'
+          buildPresetAdditionalArgs: "['--config Release']"
+          testPreset: 'default'
+          testPresetAdditionalArgs: "['--config Release']"
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+      - name: Generate changelog
+        id: changelog
+        uses: metcalfc/changelog-generator@v4.1.0
+        with:
+          myToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package headers
+        run: |
+          mkdir -p sqlquerybuilder/include
+          cp sqlquerybuilder.hpp sqlquerybuilder/include/
+          tar -czf sqlquerybuilder-${{ github.ref_name }}.tar.gz sqlquerybuilder
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: SQLQueryBuilder ${{ github.ref_name }}
+          body: |
+            # SQLQueryBuilder ${{ github.ref_name }}
+            
+            ## What's Changed
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ## Installation
+            
+            Header-only library. Simply include `sqlquerybuilder.hpp` in your project.
+            
+            Or install via CMake:
+            ```bash
+            git clone https://github.com/learnqtkenya/sqlquerybuilder.git
+            cd sqlquerybuilder
+            mkdir build && cd build
+            cmake .. && make install
+            ```
+          files: |
+            sqlquerybuilder-${{ github.ref_name }}.tar.gz
+          draft: false
+          prerelease: false

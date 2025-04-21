@@ -3,5 +3,6 @@
   "version": "1.0.0",
   "dependencies": [
     "benchmark"
-  ]
+  ], 
+  "builtin-baseline": "117524bad2789b8aa6954324a1bee4bffb7d6d09"
 }

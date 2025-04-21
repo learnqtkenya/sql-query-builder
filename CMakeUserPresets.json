@@ -5,10 +5,10 @@
       "name": "default",
       "inherits": "vcpkg",
       "environment": {
-        "VCPKG_ROOT": "$env{HOME}/bin/vcpkg"
+        "VCPKG_ROOT": "${sourceDir}/vcpkg"
       },
       "cacheVariables": {
-        "CMAKE_PREFIX_PATH": "/opt/Qt/6.8.2/gcc_64"
+        "CMAKE_PREFIX_PATH": "$env{Qt6_DIR}"
       }
     }
   ]

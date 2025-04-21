@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {
+            name: "Ubuntu Latest GCC",
+            os: ubuntu-latest,
+            preset: "default",
+            build_type: "Release",
+            cc: "gcc",
+            cxx: "g++",
+            qt_version: "6.5.0"
+          }
+          - {
+            name: "macOS Latest Clang",
+            os: macos-latest,
+            preset: "default",
+            build_type: "Release",
+            cc: "clang",
+            cxx: "clang++",
+            qt_version: "6.5.0"
+          }
+          - {
+            name: "Windows Latest MSVC",
+            os: windows-latest,
+            preset: "default",
+            build_type: "Release",
+            cc: "cl",
+            cxx: "cl",
+            qt_version: "6.5.0"
+          }
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ matrix.config.qt_version }}
+        cache: true
+
+    - uses: lukka/get-cmake@latest
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        runVcpkgInstall: true
+
+    - name: Configure, Build and Test
+      uses: lukka/run-cmake@v10
+      with:
+        configurePreset: ${{ matrix.config.preset }}
+        configurePresetAdditionalArgs: >-
+          ['-DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }}',
+          '-DCMAKE_C_COMPILER=${{ matrix.config.cc }}',
+          '-DCMAKE_CXX_COMPILER=${{ matrix.config.cxx }}']
+        buildPreset: ${{ matrix.config.preset }}
+        testPreset: ${{ matrix.config.preset }}
