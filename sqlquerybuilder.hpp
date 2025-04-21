@@ -10,6 +10,7 @@
 #include <optional>
 #include <cstdint>
 #include <functional>
+#include <string>
 
 // Optional Qt support
 #ifdef SQLQUERYBUILDER_USE_QT
